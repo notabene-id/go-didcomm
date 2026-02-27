@@ -32,4 +32,7 @@ var (
 
 	// ErrNoSender is returned when no sender is specified for operations that require one.
 	ErrNoSender = errors.New("didcomm: no sender")
+
+	// ErrNoServiceEndpoint is returned when a DID document has no DIDCommMessaging service endpoint.
+	ErrNoServiceEndpoint = errors.New("didcomm: no service endpoint")
 )
