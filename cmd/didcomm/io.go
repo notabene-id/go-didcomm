@@ -27,97 +27,18 @@ func readMessageInput(flag string) ([]byte, error) {
 	return []byte(flag), nil
 }
 
-// verificationMethodJSON is a serializable form of VerificationMethod with publicKeyJwk.
-type verificationMethodJSON struct {
-	ID           string          `json:"id"`
-	Type         string          `json:"type"`
-	Controller   string          `json:"controller"`
-	PublicKeyJWK json.RawMessage `json:"publicKeyJwk"`
-}
-
-// didDocJSON is a serializable form of DIDDocument with embedded public keys.
-type didDocJSON struct {
-	ID             string                   `json:"id"`
-	Authentication []verificationMethodJSON `json:"authentication"`
-	KeyAgreement   []verificationMethodJSON `json:"keyAgreement"`
-	Service        []didcomm.Service        `json:"service,omitempty"`
-}
-
 // marshalDIDDoc serializes a DIDDocument to JSON including public keys as publicKeyJwk.
 func marshalDIDDoc(doc *didcomm.DIDDocument) ([]byte, error) {
-	out := didDocJSON{
-		ID:      doc.ID,
-		Service: doc.Service,
-	}
-
-	for _, vm := range doc.Authentication {
-		jwkBytes, err := json.Marshal(vm.PublicKey)
-		if err != nil {
-			return nil, fmt.Errorf("marshal authentication key %s: %w", vm.ID, err)
-		}
-		out.Authentication = append(out.Authentication, verificationMethodJSON{
-			ID:           vm.ID,
-			Type:         vm.Type,
-			Controller:   vm.Controller,
-			PublicKeyJWK: jwkBytes,
-		})
-	}
-
-	for _, vm := range doc.KeyAgreement {
-		jwkBytes, err := json.Marshal(vm.PublicKey)
-		if err != nil {
-			return nil, fmt.Errorf("marshal key agreement key %s: %w", vm.ID, err)
-		}
-		out.KeyAgreement = append(out.KeyAgreement, verificationMethodJSON{
-			ID:           vm.ID,
-			Type:         vm.Type,
-			Controller:   vm.Controller,
-			PublicKeyJWK: jwkBytes,
-		})
-	}
-
-	return json.MarshalIndent(out, "", "  ")
+	return json.MarshalIndent(doc, "", "  ")
 }
 
-// unmarshalDIDDoc deserializes a DIDDocument from JSON, restoring publicKeyJwk into PublicKey.
+// unmarshalDIDDoc deserializes a DIDDocument from JSON.
 func unmarshalDIDDoc(data []byte) (*didcomm.DIDDocument, error) {
-	var raw didDocJSON
-	if err := json.Unmarshal(data, &raw); err != nil {
+	var doc didcomm.DIDDocument
+	if err := json.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("parse DID document: %w", err)
 	}
-
-	doc := &didcomm.DIDDocument{
-		ID:      raw.ID,
-		Service: raw.Service,
-	}
-
-	for _, vm := range raw.Authentication {
-		key, err := jwk.ParseKey(vm.PublicKeyJWK)
-		if err != nil {
-			return nil, fmt.Errorf("parse authentication key %s: %w", vm.ID, err)
-		}
-		doc.Authentication = append(doc.Authentication, didcomm.VerificationMethod{
-			ID:         vm.ID,
-			Type:       vm.Type,
-			Controller: vm.Controller,
-			PublicKey:  key,
-		})
-	}
-
-	for _, vm := range raw.KeyAgreement {
-		key, err := jwk.ParseKey(vm.PublicKeyJWK)
-		if err != nil {
-			return nil, fmt.Errorf("parse key agreement key %s: %w", vm.ID, err)
-		}
-		doc.KeyAgreement = append(doc.KeyAgreement, didcomm.VerificationMethod{
-			ID:         vm.ID,
-			Type:       vm.Type,
-			Controller: vm.Controller,
-			PublicKey:  key,
-		})
-	}
-
-	return doc, nil
+	return &doc, nil
 }
 
 // marshalKeyPair serializes a KeyPair's private keys as a JWK Set.
@@ -155,9 +76,9 @@ func loadKeyFile(path string) (*didcomm.InMemorySecretsStore, error) {
 	return store, nil
 }
 
-// loadDIDDocs loads DID documents from a comma-separated list of file paths.
-func loadDIDDocs(paths string) (*didcomm.Resolver, error) {
-	resolver := didcomm.NewResolver()
+// loadDIDDocs loads DID documents from a comma-separated list of file paths into an InMemoryResolver.
+func loadDIDDocs(paths string) (*didcomm.InMemoryResolver, error) {
+	resolver := didcomm.NewInMemoryResolver()
 	if paths == "" {
 		return resolver, nil
 	}
@@ -180,14 +101,41 @@ func loadDIDDocs(paths string) (*didcomm.Resolver, error) {
 	return resolver, nil
 }
 
-// buildClient creates a Client from a key file path and comma-separated DID doc paths.
+// buildResolverWithOverrides creates a MultiResolver with optional DID doc file overrides
+// loaded into the fallback InMemoryResolver.
+func buildResolverWithOverrides(didDocPaths string) (*didcomm.MultiResolver, error) {
+	multi, mem := didcomm.DefaultResolver()
+
+	if didDocPaths != "" {
+		for _, p := range strings.Split(didDocPaths, ",") {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				continue
+			}
+			data, err := os.ReadFile(p)
+			if err != nil {
+				return nil, fmt.Errorf("read DID document %s: %w", p, err)
+			}
+			doc, err := unmarshalDIDDoc(data)
+			if err != nil {
+				return nil, fmt.Errorf("parse DID document %s: %w", p, err)
+			}
+			mem.Store(doc)
+		}
+	}
+
+	return multi, nil
+}
+
+// buildClient creates a Client with DefaultResolver (did:key + did:web auto-resolution),
+// optional --did-doc overrides, and secrets from the key file.
 func buildClient(keyFile, didDocPaths string) (*didcomm.Client, error) {
 	secrets, err := loadKeyFile(keyFile)
 	if err != nil {
 		return nil, err
 	}
 
-	resolver, err := loadDIDDocs(didDocPaths)
+	resolver, err := buildResolverWithOverrides(didDocPaths)
 	if err != nil {
 		return nil, err
 	}

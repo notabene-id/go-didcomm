@@ -2,6 +2,7 @@ package didcomm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -240,5 +241,81 @@ func TestDIDDocument_FindSigningKey_Empty(t *testing.T) {
 	_, err := doc.FindSigningKey()
 	if !errors.Is(err, ErrKeyNotFound) {
 		t.Fatalf("expected ErrKeyNotFound, got %v", err)
+	}
+}
+
+func TestDIDDocument_FindDIDCommEndpoint(t *testing.T) {
+	doc := &DIDDocument{
+		ID: "did:web:example.com",
+		Service: []Service{
+			{ID: "#didcomm", Type: "DIDCommMessaging", ServiceEndpoint: "https://example.com/didcomm"},
+		},
+	}
+
+	endpoint, err := doc.FindDIDCommEndpoint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if endpoint != "https://example.com/didcomm" {
+		t.Fatalf("expected https://example.com/didcomm, got %s", endpoint)
+	}
+}
+
+func TestDIDDocument_FindDIDCommEndpoint_NoService(t *testing.T) {
+	doc := &DIDDocument{ID: "did:key:test"}
+	_, err := doc.FindDIDCommEndpoint()
+	if !errors.Is(err, ErrNoServiceEndpoint) {
+		t.Fatalf("expected ErrNoServiceEndpoint, got %v", err)
+	}
+}
+
+func TestDIDDocument_FindDIDCommEndpoint_WrongType(t *testing.T) {
+	doc := &DIDDocument{
+		ID: "did:web:example.com",
+		Service: []Service{
+			{ID: "#other", Type: "OtherService", ServiceEndpoint: "https://example.com/other"},
+		},
+	}
+	_, err := doc.FindDIDCommEndpoint()
+	if !errors.Is(err, ErrNoServiceEndpoint) {
+		t.Fatalf("expected ErrNoServiceEndpoint, got %v", err)
+	}
+}
+
+func TestVerificationMethod_JSON_RoundTrip(t *testing.T) {
+	doc, _, err := GenerateDIDKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Marshal the entire DIDDocument (uses VerificationMethod.MarshalJSON)
+	data, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Unmarshal back
+	var doc2 DIDDocument
+	if err := json.Unmarshal(data, &doc2); err != nil {
+		t.Fatal(err)
+	}
+
+	if doc2.ID != doc.ID {
+		t.Fatalf("ID mismatch: %s != %s", doc2.ID, doc.ID)
+	}
+	if len(doc2.Authentication) != 1 {
+		t.Fatalf("expected 1 auth, got %d", len(doc2.Authentication))
+	}
+	if len(doc2.KeyAgreement) != 1 {
+		t.Fatalf("expected 1 ka, got %d", len(doc2.KeyAgreement))
+	}
+	if doc2.Authentication[0].PublicKey == nil {
+		t.Fatal("auth public key nil after round-trip")
+	}
+	if doc2.KeyAgreement[0].PublicKey == nil {
+		t.Fatal("ka public key nil after round-trip")
+	}
+	if doc2.Authentication[0].ID != doc.Authentication[0].ID {
+		t.Fatalf("auth key ID mismatch")
 	}
 }

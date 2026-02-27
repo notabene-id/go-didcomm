@@ -13,15 +13,21 @@ Usage:
   didcomm <command> [options]
 
 Commands:
-  did generate-key                                     Generate a did:key identity
-  did generate-web --domain <d> [--path <p>]           Generate a did:web identity
-  pack signed    --key-file <f> --did-doc <f> [--message <m>]   Sign a message (JWS)
-  pack anoncrypt --did-doc <f> [--message <m>]                  Anonymous encrypt (JWE)
-  pack authcrypt --key-file <f> --did-doc <f> [--message <m>]   Sign-then-encrypt
-  unpack         --key-file <f> [--did-doc <f>] [--message <m>] Unpack a message
-  send           --to <url> [--message <m>]                     HTTP POST to endpoint
-  version                                              Print version
-  help                                                 Print this help
+  did generate-key                                          Generate a did:key identity
+  did generate-web --domain <d> [--path <p>]                Generate a did:web identity
+  pack signed    --key-file <f> [--send] [--did-doc <f>]    Sign a message (JWS)
+  pack anoncrypt [--send] [--did-doc <f>] [--message <m>]   Anonymous encrypt (JWE)
+  pack authcrypt --key-file <f> [--send] [--did-doc <f>]    Sign-then-encrypt
+  unpack         --key-file <f> [--did-doc <f>]             Unpack a message
+  send           --to <url> [--message <m>]                 HTTP POST pre-packed message
+  version                                                   Print version
+  help                                                      Print this help
+
+DID resolution is automatic for did:key and did:web. The --did-doc flag is
+only needed for overriding or supplementing auto-resolved documents.
+
+The --send flag on pack commands resolves the first recipient's DIDCommMessaging
+service endpoint and POSTs the packed message to it.
 
 Message input (--message flag):
   -           Read from stdin (default)
@@ -29,15 +35,18 @@ Message input (--message flag):
   '{"json"}'  Inline JSON string
 
 Examples:
-  # Generate a did:key identity
+  # Generate identities
   didcomm did generate-key --output-dir alice
+  didcomm did generate-key --output-dir bob
 
-  # Pack a signed message
-  echo '{"id":"1","type":"example","from":"did:key:z...","body":{}}' | \
-    didcomm pack signed --key-file alice/keys.json --did-doc alice/did-doc.json
+  # Pack and send (auto-resolves did:key)
+  ALICE=$(jq -r .id alice/did-doc.json)
+  BOB=$(jq -r .id bob/did-doc.json)
+  echo '{"id":"1","type":"test","from":"'$ALICE'","to":["'$BOB'"],"body":{}}' | \
+    didcomm pack authcrypt --key-file alice/keys.json
 
-  # Unpack a message
-  didcomm unpack --key-file bob/keys.json --did-doc alice/did-doc.json,bob/did-doc.json --message @packed.json
+  # Unpack (auto-resolves sender's DID for signature verification)
+  didcomm unpack --key-file bob/keys.json --message @packed.json
 `
 
 func main() {

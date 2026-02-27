@@ -443,7 +443,7 @@ func TestCLI_NoArgs(t *testing.T) {
 
 func TestCLI_PackSigned_MissingKeyFile(t *testing.T) {
 	bin := buildBinary(t)
-	cmd := exec.Command(bin, "pack", "signed", "--did-doc", "x.json", "--message", "{}")
+	cmd := exec.Command(bin, "pack", "signed", "--message", "{}")
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatal("expected error for missing key file flag")
@@ -453,15 +453,41 @@ func TestCLI_PackSigned_MissingKeyFile(t *testing.T) {
 	}
 }
 
-func TestCLI_PackAnoncrypt_MissingDIDDoc(t *testing.T) {
+func TestCLI_PackAnoncrypt_NoDIDDoc_AutoResolve(t *testing.T) {
+	// did:key should auto-resolve without --did-doc
 	bin := buildBinary(t)
-	cmd := exec.Command(bin, "pack", "anoncrypt", "--message", "{}")
-	out, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatal("expected error for missing did-doc flag")
+	dir := t.TempDir()
+
+	bobDir := filepath.Join(dir, "bob")
+	bobDoc := generateIdentity(t, bobDir)
+
+	msg := `{"id":"auto-1","type":"https://example.com/test","to":["` + bobDoc.ID + `"],"body":{}}`
+
+	packCmd := exec.Command(bin, "pack", "anoncrypt", "--message", msg)
+	packed, err := packCmd.Output()
+	if err != nil {
+		t.Fatalf("pack anoncrypt without --did-doc failed: %s", err)
 	}
-	if !strings.Contains(string(out), "--did-doc is required") {
-		t.Fatalf("expected did-doc error, got: %s", out)
+
+	// Unpack with bob's keys (also no --did-doc)
+	unpackCmd := exec.Command(bin, "unpack",
+		"--key-file", filepath.Join(bobDir, "keys.json"),
+		"--message", string(packed),
+	)
+	unpackOut, err := unpackCmd.Output()
+	if err != nil {
+		t.Fatalf("unpack failed: %s", err)
+	}
+
+	var result unpackOutput
+	if err := json.Unmarshal(unpackOut, &result); err != nil {
+		t.Fatalf("invalid unpack output: %s", err)
+	}
+	if !result.Encrypted {
+		t.Fatal("expected encrypted=true")
+	}
+	if !result.Anonymous {
+		t.Fatal("expected anonymous=true")
 	}
 }
 
@@ -571,6 +597,58 @@ func TestPackUnpack_FileInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	if innerMsg.ID != "file-test" {
+		t.Fatalf("got message ID %s", innerMsg.ID)
+	}
+}
+
+func TestCLI_PackAuthcrypt_Unpack_AutoResolve(t *testing.T) {
+	// Test full round-trip without --did-doc (auto-resolves did:key)
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	aliceDir := filepath.Join(dir, "alice")
+	aliceDoc := generateIdentity(t, aliceDir)
+	bobDir := filepath.Join(dir, "bob")
+	bobDoc := generateIdentity(t, bobDir)
+
+	msg := `{"id":"auto-2","type":"https://example.com/test","from":"` + aliceDoc.ID + `","to":["` + bobDoc.ID + `"],"body":{"text":"hi"}}`
+
+	// Pack authcrypt — no --did-doc
+	packCmd := exec.Command(bin, "pack", "authcrypt",
+		"--key-file", filepath.Join(aliceDir, "keys.json"),
+		"--message", msg,
+	)
+	packed, err := packCmd.Output()
+	if err != nil {
+		t.Fatalf("pack authcrypt failed: %s", err)
+	}
+
+	// Unpack — no --did-doc
+	unpackCmd := exec.Command(bin, "unpack",
+		"--key-file", filepath.Join(bobDir, "keys.json"),
+		"--message", string(packed),
+	)
+	unpackOut, err := unpackCmd.Output()
+	if err != nil {
+		t.Fatalf("unpack failed: %s", err)
+	}
+
+	var result unpackOutput
+	if err := json.Unmarshal(unpackOut, &result); err != nil {
+		t.Fatalf("invalid unpack output: %s", err)
+	}
+	if !result.Encrypted || !result.Signed {
+		t.Fatal("expected encrypted+signed")
+	}
+	if result.Anonymous {
+		t.Fatal("expected anonymous=false")
+	}
+
+	var innerMsg didcomm.Message
+	if err := json.Unmarshal(result.Message, &innerMsg); err != nil {
+		t.Fatal(err)
+	}
+	if innerMsg.ID != "auto-2" {
 		t.Fatalf("got message ID %s", innerMsg.ID)
 	}
 }

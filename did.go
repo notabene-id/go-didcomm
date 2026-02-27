@@ -3,6 +3,7 @@ package didcomm
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -24,6 +25,50 @@ type VerificationMethod struct {
 	Type       string  `json:"type"`
 	Controller string  `json:"controller"`
 	PublicKey  jwk.Key `json:"-"`
+}
+
+// verificationMethodJSON is the JSON wire format with publicKeyJwk.
+type verificationMethodJSON struct {
+	ID           string          `json:"id"`
+	Type         string          `json:"type"`
+	Controller   string          `json:"controller"`
+	PublicKeyJWK json.RawMessage `json:"publicKeyJwk,omitempty"`
+}
+
+// MarshalJSON serializes a VerificationMethod including publicKeyJwk.
+func (vm VerificationMethod) MarshalJSON() ([]byte, error) {
+	out := verificationMethodJSON{
+		ID:         vm.ID,
+		Type:       vm.Type,
+		Controller: vm.Controller,
+	}
+	if vm.PublicKey != nil {
+		jwkBytes, err := json.Marshal(vm.PublicKey)
+		if err != nil {
+			return nil, fmt.Errorf("marshal publicKeyJwk for %s: %w", vm.ID, err)
+		}
+		out.PublicKeyJWK = jwkBytes
+	}
+	return json.Marshal(out)
+}
+
+// UnmarshalJSON deserializes a VerificationMethod restoring publicKeyJwk into PublicKey.
+func (vm *VerificationMethod) UnmarshalJSON(data []byte) error {
+	var raw verificationMethodJSON
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	vm.ID = raw.ID
+	vm.Type = raw.Type
+	vm.Controller = raw.Controller
+	if len(raw.PublicKeyJWK) > 0 {
+		key, err := jwk.ParseKey(raw.PublicKeyJWK)
+		if err != nil {
+			return fmt.Errorf("parse publicKeyJwk for %s: %w", raw.ID, err)
+		}
+		vm.PublicKey = key
+	}
+	return nil
 }
 
 // DIDDocument is a thin DID document with only DIDComm-relevant fields.
@@ -219,4 +264,14 @@ func (doc *DIDDocument) FindSigningKey() (*VerificationMethod, error) {
 		return nil, fmt.Errorf("%w: no authentication keys in DID document %s", ErrKeyNotFound, doc.ID)
 	}
 	return &doc.Authentication[0], nil
+}
+
+// FindDIDCommEndpoint returns the first DIDCommMessaging service endpoint URL from the document.
+func (doc *DIDDocument) FindDIDCommEndpoint() (string, error) {
+	for _, svc := range doc.Service {
+		if svc.Type == "DIDCommMessaging" && svc.ServiceEndpoint != "" {
+			return svc.ServiceEndpoint, nil
+		}
+	}
+	return "", fmt.Errorf("%w: no DIDCommMessaging service in DID document %s", ErrNoServiceEndpoint, doc.ID)
 }

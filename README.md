@@ -9,6 +9,7 @@ A Go library for [DIDComm v2](https://identity.foundation/didcomm-messaging/spec
 - **Authenticated encryption** (authcrypt) using sign-then-encrypt
 - **Auto-detection** of message format on unpack (JWE, JWS, or plain JSON)
 - **did:key** and **did:web** generation with Ed25519 signing and X25519 key agreement keys
+- **Automatic DID resolution** for did:key (local) and did:web (HTTPS fetch)
 - Pluggable DID resolver and secrets store interfaces
 
 ## Install
@@ -40,10 +41,8 @@ func main() {
 	aliceDoc, aliceKeys, _ := didcomm.GenerateDIDKey()
 	bobDoc, bobKeys, _ := didcomm.GenerateDIDKey()
 
-	// Set up resolver and secrets store
-	resolver := didcomm.NewResolver()
-	resolver.Store(aliceDoc)
-	resolver.Store(bobDoc)
+	// Set up resolver (auto-resolves did:key and did:web) and secrets store
+	resolver, _ := didcomm.DefaultResolver()
 
 	secrets := didcomm.NewInMemorySecretsStore()
 	secrets.Store(aliceKeys)
@@ -90,6 +89,18 @@ packed, err := client.PackAnoncrypt(ctx, msg)
 packed, err := client.PackAuthcrypt(ctx, msg)
 ```
 
+### Custom resolver
+
+Implement the `Resolver` interface to integrate with your DID resolution infrastructure:
+
+```go
+type Resolver interface {
+	Resolve(ctx context.Context, did string) (*DIDDocument, error)
+}
+```
+
+Built-in resolvers: `DIDKeyResolver` (local), `DIDWebResolver` (HTTPS), `MultiResolver` (routes by method), `InMemoryResolver` (manual). Use `DefaultResolver()` for a pre-configured setup.
+
 ### Custom secrets resolver
 
 Implement the `SecretsResolver` interface to integrate with your key management system:
@@ -115,12 +126,16 @@ go install github.com/Notabene-id/go-didcomm/cmd/didcomm@latest
 ```
 didcomm did generate-key [--output-dir <dir>]
 didcomm did generate-web --domain <d> [--path <p>] [--service-endpoint <url>] [--output-dir <dir>]
-didcomm pack signed    --key-file <f> --did-doc <f> [--message <m>]
-didcomm pack anoncrypt --did-doc <f> [--message <m>]
-didcomm pack authcrypt --key-file <f> --did-doc <f> [--message <m>]
+didcomm pack signed    --key-file <f> [--send] [--did-doc <f>] [--message <m>]
+didcomm pack anoncrypt [--send] [--did-doc <f>] [--message <m>]
+didcomm pack authcrypt --key-file <f> [--send] [--did-doc <f>] [--message <m>]
 didcomm unpack         --key-file <f> [--did-doc <f>] [--message <m>]
 didcomm send           --to <url> [--message <m>]
 ```
+
+DID resolution is automatic for `did:key` (decoded locally) and `did:web` (fetched over HTTPS). The `--did-doc` flag is only needed to override or supplement auto-resolved documents.
+
+The `--send` flag on pack commands resolves the first recipient's DIDCommMessaging service endpoint and POSTs the packed message to it.
 
 The `--message` flag accepts `-` for stdin (default), `@filename` to read from a file, or an inline JSON string.
 
@@ -135,25 +150,20 @@ didcomm did generate-key --output-dir bob
 
 This creates `did-doc.json` (public DID document) and `keys.json` (private JWK Set) in each directory.
 
-Create a message and pack it with authenticated encryption:
+Create a message and pack it with authenticated encryption (did:key auto-resolves — no `--did-doc` needed):
 
 ```bash
-ALICE_DID=$(jq -r .id alice/did-doc.json)
-BOB_DID=$(jq -r .id bob/did-doc.json)
+ALICE=$(jq -r .id alice/did-doc.json)
+BOB=$(jq -r .id bob/did-doc.json)
 
-echo "{\"id\":\"1\",\"type\":\"https://example.com/hello\",\"from\":\"$ALICE_DID\",\"to\":[\"$BOB_DID\"],\"body\":{\"text\":\"hi\"}}" | \
-  didcomm pack authcrypt \
-    --key-file alice/keys.json \
-    --did-doc alice/did-doc.json,bob/did-doc.json > packed.json
+echo '{"id":"1","type":"https://example.com/hello","from":"'$ALICE'","to":["'$BOB'"],"body":{"text":"hi"}}' | \
+  didcomm pack authcrypt --key-file alice/keys.json > packed.json
 ```
 
 Unpack with Bob's keys:
 
 ```bash
-didcomm unpack \
-  --key-file bob/keys.json \
-  --did-doc alice/did-doc.json,bob/did-doc.json \
-  --message @packed.json
+didcomm unpack --key-file bob/keys.json --message @packed.json
 ```
 
 Send a packed message to an endpoint:
@@ -192,19 +202,22 @@ go test -cover ./...
 
 ```
 .
-├── didcomm.go        # Client with Pack*/Unpack operations
-├── message.go        # DIDComm v2 Message type and JSON marshaling
-├── did.go            # DID document types, did:key/did:web generation, Resolver
-├── keys.go           # Ed25519/X25519 key pair generation
-├── secrets.go        # SecretsResolver interface and in-memory implementation
-├── encrypt.go        # Anonymous encryption (anoncrypt) using JWE
-├── authcrypt.go      # Authenticated encryption (sign-then-encrypt)
-├── sign.go           # JWS signing and verification
-├── errors.go         # Sentinel errors
+├── didcomm.go           # Client with Pack*/Unpack operations
+├── message.go           # DIDComm v2 Message type and JSON marshaling
+├── did.go               # DID document types, did:key/did:web generation, Resolver interface
+├── resolve_didkey.go    # DIDKeyResolver — local did:key resolution
+├── resolve_didweb.go    # DIDWebResolver — HTTPS did:web resolution
+├── resolve_multi.go     # MultiResolver — routes by DID method, DefaultResolver()
+├── keys.go              # Ed25519/X25519 key pair generation
+├── secrets.go           # SecretsResolver interface and in-memory implementation
+├── encrypt.go           # Anonymous encryption (anoncrypt) using JWE
+├── authcrypt.go         # Authenticated encryption (sign-then-encrypt)
+├── sign.go              # JWS signing and verification
+├── errors.go            # Sentinel errors
 ├── cmd/
-│   └── didcomm/      # CLI tool
+│   └── didcomm/         # CLI tool
 └── internal/
-    └── convert/      # Ed25519 ↔ X25519 key conversion
+    └── convert/         # Ed25519 ↔ X25519 key conversion
 ```
 
 ## License
