@@ -134,41 +134,9 @@ func (c *Client) unpackEncrypted(ctx context.Context, encrypted []byte) (*Unpack
 		return nil, fmt.Errorf("parse JWE: %w", err)
 	}
 
-	// Try to find a matching recipient key
-	var decrypted []byte
-	for _, r := range msg.Recipients() {
-		hdr := r.Headers()
-		kid, ok := hdr.KeyID()
-		if !ok {
-			continue
-		}
-
-		privKey, err := c.secrets.GetKey(ctx, kid)
-		if err != nil {
-			continue
-		}
-
-		decrypted, err = anonDecrypt(encrypted, privKey)
-		if err != nil {
-			continue
-		}
-		break
-	}
-
-	// If no recipient matched by KID, try with all encryption keys from secrets
-	if decrypted == nil {
-		// Try the protected header KID (single-recipient compact JWE)
-		if hdrs := msg.ProtectedHeaders(); hdrs != nil {
-			if kid, ok := hdrs.KeyID(); ok {
-				if privKey, err := c.secrets.GetKey(ctx, kid); err == nil {
-					decrypted, _ = anonDecrypt(encrypted, privKey)
-				}
-			}
-		}
-	}
-
-	if decrypted == nil {
-		return nil, fmt.Errorf("%w: no matching recipient key found", ErrDecryptionFailed)
+	decrypted, err := c.decryptJWE(ctx, encrypted, msg)
+	if err != nil {
+		return nil, err
 	}
 
 	// Check for skid (sender key ID) — indicates authcrypt
@@ -186,33 +154,65 @@ func (c *Client) unpackEncrypted(ctx context.Context, encrypted []byte) (*Unpack
 	// If authcrypt (has skid), the decrypted content is a JWS — verify it
 	if skid != "" {
 		result.Signed = true
-
-		// Find sender's public signing key via skid
-		senderPubKey, err := c.resolveKeyByKID(ctx, skid)
-		if err != nil {
-			return nil, fmt.Errorf("resolve sender key %s: %w", skid, err)
+		payload, verifyErr := c.verifyAuthcryptSender(ctx, decrypted, skid)
+		if verifyErr != nil {
+			return nil, verifyErr
 		}
-
-		payload, err := verifySignature(decrypted, senderPubKey)
-		if err != nil {
-			return nil, err
-		}
-
-		var m Message
-		if err := json.Unmarshal(payload, &m); err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrInvalidMessage, err)
-		}
-		result.Message = &m
-	} else {
-		// Anoncrypt — decrypted content is plain JSON
-		var m Message
-		if err := json.Unmarshal(decrypted, &m); err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrInvalidMessage, err)
-		}
-		result.Message = &m
+		decrypted = payload
 	}
 
+	var m Message
+	if err := json.Unmarshal(decrypted, &m); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidMessage, err)
+	}
+	result.Message = &m
+
 	return result, nil
+}
+
+// decryptJWE tries recipient keys and protected header KID to decrypt a JWE message.
+func (c *Client) decryptJWE(ctx context.Context, encrypted []byte, msg *jwe.Message) ([]byte, error) {
+	// Try to find a matching recipient key
+	for _, r := range msg.Recipients() {
+		hdr := r.Headers()
+		kid, ok := hdr.KeyID()
+		if !ok {
+			continue
+		}
+
+		privKey, err := c.secrets.GetKey(ctx, kid)
+		if err != nil {
+			continue
+		}
+
+		decrypted, err := anonDecrypt(encrypted, privKey)
+		if err != nil {
+			continue
+		}
+		return decrypted, nil
+	}
+
+	// Try the protected header KID (single-recipient compact JWE)
+	if hdrs := msg.ProtectedHeaders(); hdrs != nil {
+		if kid, ok := hdrs.KeyID(); ok {
+			if privKey, err := c.secrets.GetKey(ctx, kid); err == nil {
+				if decrypted, err := anonDecrypt(encrypted, privKey); err == nil {
+					return decrypted, nil
+				}
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("%w: no matching recipient key found", ErrDecryptionFailed)
+}
+
+// verifyAuthcryptSender verifies the JWS signature from an authcrypt sender.
+func (c *Client) verifyAuthcryptSender(ctx context.Context, signed []byte, skid string) ([]byte, error) {
+	senderPubKey, err := c.resolveKeyByKID(ctx, skid)
+	if err != nil {
+		return nil, fmt.Errorf("resolve sender key %s: %w", skid, err)
+	}
+	return verifySignature(signed, senderPubKey)
 }
 
 func (c *Client) unpackSigned(ctx context.Context, signed []byte) (*UnpackResult, error) {
@@ -239,7 +239,7 @@ func (c *Client) unpackSigned(ctx context.Context, signed []byte) (*UnpackResult
 
 	var m Message
 	if err := json.Unmarshal(payload, &m); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidMessage, err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidMessage, err)
 	}
 
 	return &UnpackResult{
@@ -253,7 +253,7 @@ func (c *Client) unpackSigned(ctx context.Context, signed []byte) (*UnpackResult
 func (c *Client) unpackPlain(data []byte) (*UnpackResult, error) {
 	var m Message
 	if err := json.Unmarshal(data, &m); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidMessage, err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidMessage, err)
 	}
 	if err := m.Validate(); err != nil {
 		return nil, err

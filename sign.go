@@ -21,7 +21,7 @@ func signMessage(payload []byte, signingKey jwk.Key) ([]byte, error) {
 		jws.WithKey(jwa.EdDSA(), signingKey, jws.WithProtectedHeaders(hdrs)),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrSigningFailed, err)
+		return nil, fmt.Errorf("%w: %w", ErrSigningFailed, err)
 	}
 	return signed, nil
 }
@@ -33,7 +33,7 @@ func verifySignature(signed []byte, publicKey jwk.Key) ([]byte, error) {
 		jws.WithKey(jwa.EdDSA(), publicKey),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrVerificationFailed, err)
+		return nil, fmt.Errorf("%w: %w", ErrVerificationFailed, err)
 	}
 	return payload, nil
 }

@@ -2,6 +2,7 @@ package didcomm
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/lestrrat-go/jwx/v3/jwk"
@@ -133,7 +134,7 @@ func TestAuthcrypt_WrongRecipientKey(t *testing.T) {
 func TestAuthcrypt_NoRecipients(t *testing.T) {
 	_, aliceKP, _ := GenerateDIDKey()
 	_, err := authcrypt([]byte(`{}`), aliceKP.SigningJWK, nil)
-	if err != ErrNoRecipients {
+	if !errors.Is(err, ErrNoRecipients) {
 		t.Fatalf("expected ErrNoRecipients, got %v", err)
 	}
 }
@@ -170,8 +171,8 @@ func TestAuthcrypt_MultipleRecipients(t *testing.T) {
 	}
 
 	var msg1 Message
-	if err := json.Unmarshal(dec1, &msg1); err != nil {
-		t.Fatal(err)
+	if unmarshalErr := json.Unmarshal(dec1, &msg1); unmarshalErr != nil {
+		t.Fatal(unmarshalErr)
 	}
 	if msg1.ID != "1" {
 		t.Fatalf("bob1: expected ID=1, got %s", msg1.ID)

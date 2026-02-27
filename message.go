@@ -7,15 +7,15 @@ import (
 
 // Message represents a DIDComm v2 message.
 type Message struct {
-	ID        string            `json:"id"`
-	Type      string            `json:"type"`
-	From      string            `json:"from,omitempty"`
-	To        []string          `json:"to,omitempty"`
-	CreatedAt *time.Time        `json:"created_time,omitempty"`
-	ExpiresAt *time.Time        `json:"expires_time,omitempty"`
-	Body      json.RawMessage   `json:"body"`
-	Thid      string            `json:"thid,omitempty"`
-	Pthid     string            `json:"pthid,omitempty"`
+	ID        string                 `json:"id"`
+	Type      string                 `json:"type"`
+	From      string                 `json:"from,omitempty"`
+	To        []string               `json:"to,omitempty"`
+	CreatedAt *time.Time             `json:"created_time,omitempty"`
+	ExpiresAt *time.Time             `json:"expires_time,omitempty"`
+	Body      json.RawMessage        `json:"body"`
+	Thid      string                 `json:"thid,omitempty"`
+	Pthid     string                 `json:"pthid,omitempty"`
 	Extra     map[string]interface{} `json:"-"`
 }
 

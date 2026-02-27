@@ -79,7 +79,7 @@ func TestInMemorySecretsStore_ConcurrentAccess(t *testing.T) {
 
 	// Store keys concurrently
 	done := make(chan struct{})
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			defer func() { done <- struct{}{} }()
 			kp, err := GenerateKeyPair()
@@ -91,7 +91,7 @@ func TestInMemorySecretsStore_ConcurrentAccess(t *testing.T) {
 			store.Store(kp)
 		}()
 	}
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		<-done
 	}
 

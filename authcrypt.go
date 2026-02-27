@@ -52,21 +52,21 @@ func authcrypt(payload []byte, signingKey jwk.Key, recipientKeys []jwk.Key) ([]b
 
 	encrypted, err := jwe.Encrypt(signed, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrEncryptionFailed, err)
+		return nil, fmt.Errorf("%w: %w", ErrEncryptionFailed, err)
 	}
 	return encrypted, nil
 }
 
 // authDecrypt decrypts and verifies an authcrypt message.
 // Returns the inner payload, the sender's key ID (from skid header), and whether it was signed.
-func authDecrypt(encrypted []byte, privateKey jwk.Key, senderPublicKey jwk.Key) ([]byte, string, error) {
+func authDecrypt(encrypted []byte, privateKey, senderPublicKey jwk.Key) (payload []byte, skid string, err error) {
 	// Step 1: Decrypt the JWE
 	signed, err := jwe.Decrypt(
 		encrypted,
 		jwe.WithKey(jwa.ECDH_ES_A256KW(), privateKey),
 	)
 	if err != nil {
-		return nil, "", fmt.Errorf("%w: %v", ErrDecryptionFailed, err)
+		return nil, "", fmt.Errorf("%w: %w", ErrDecryptionFailed, err)
 	}
 
 	// Step 2: Extract skid from headers
@@ -74,11 +74,10 @@ func authDecrypt(encrypted []byte, privateKey jwk.Key, senderPublicKey jwk.Key) 
 	if err != nil {
 		return nil, "", fmt.Errorf("parse JWE headers: %w", err)
 	}
-	var skid string
 	_ = hdrs.Get("skid", &skid)
 
 	// Step 3: Verify the JWS signature
-	payload, err := verifySignature(signed, senderPublicKey)
+	payload, err = verifySignature(signed, senderPublicKey)
 	if err != nil {
 		return nil, skid, fmt.Errorf("authcrypt verify: %w", err)
 	}

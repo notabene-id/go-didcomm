@@ -3,15 +3,17 @@ package didcomm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 )
 
-func setupAliceAndBob(t *testing.T) (aliceDoc *DIDDocument, aliceKP *KeyPair, bobDoc *DIDDocument, bobKP *KeyPair, client *Client) {
+func setupAliceAndBob(t *testing.T) (aliceDoc *DIDDocument, bobDoc *DIDDocument, bobKP *KeyPair, client *Client) {
 	t.Helper()
 
 	resolver := NewResolver()
 	secrets := NewInMemorySecretsStore()
 
+	var aliceKP *KeyPair
 	var err error
 	aliceDoc, aliceKP, err = GenerateDIDKey()
 	if err != nil {
@@ -32,7 +34,7 @@ func setupAliceAndBob(t *testing.T) (aliceDoc *DIDDocument, aliceKP *KeyPair, bo
 }
 
 func TestClient_PackSigned_Unpack(t *testing.T) {
-	aliceDoc, _, _, _, client := setupAliceAndBob(t)
+	aliceDoc, _, _, client := setupAliceAndBob(t)
 	ctx := context.Background()
 
 	msg := &Message{
@@ -67,7 +69,7 @@ func TestClient_PackSigned_Unpack(t *testing.T) {
 }
 
 func TestClient_PackAnoncrypt_Unpack(t *testing.T) {
-	_, _, bobDoc, _, client := setupAliceAndBob(t)
+	_, bobDoc, _, client := setupAliceAndBob(t)
 	ctx := context.Background()
 
 	msg := &Message{
@@ -102,7 +104,7 @@ func TestClient_PackAnoncrypt_Unpack(t *testing.T) {
 }
 
 func TestClient_PackAuthcrypt_Unpack(t *testing.T) {
-	aliceDoc, _, bobDoc, _, client := setupAliceAndBob(t)
+	aliceDoc, bobDoc, _, client := setupAliceAndBob(t)
 	ctx := context.Background()
 
 	msg := &Message{
@@ -138,7 +140,7 @@ func TestClient_PackAuthcrypt_Unpack(t *testing.T) {
 }
 
 func TestClient_Unpack_PlainJSON(t *testing.T) {
-	_, _, _, _, client := setupAliceAndBob(t)
+	_, _, _, client := setupAliceAndBob(t)
 	ctx := context.Background()
 
 	plainMsg := `{"id":"msg-4","type":"https://example.com/test","body":{}}`
@@ -160,7 +162,7 @@ func TestClient_Unpack_PlainJSON(t *testing.T) {
 }
 
 func TestClient_PackSigned_RequiresFrom(t *testing.T) {
-	_, _, _, _, client := setupAliceAndBob(t)
+	_, _, _, client := setupAliceAndBob(t)
 	ctx := context.Background()
 
 	msg := &Message{
@@ -170,13 +172,13 @@ func TestClient_PackSigned_RequiresFrom(t *testing.T) {
 	}
 
 	_, err := client.PackSigned(ctx, msg)
-	if err != ErrNoSender {
+	if !errors.Is(err, ErrNoSender) {
 		t.Fatalf("expected ErrNoSender, got %v", err)
 	}
 }
 
 func TestClient_PackAnoncrypt_RequiresTo(t *testing.T) {
-	_, _, _, _, client := setupAliceAndBob(t)
+	_, _, _, client := setupAliceAndBob(t)
 	ctx := context.Background()
 
 	msg := &Message{
@@ -186,13 +188,13 @@ func TestClient_PackAnoncrypt_RequiresTo(t *testing.T) {
 	}
 
 	_, err := client.PackAnoncrypt(ctx, msg)
-	if err != ErrNoRecipients {
+	if !errors.Is(err, ErrNoRecipients) {
 		t.Fatalf("expected ErrNoRecipients, got %v", err)
 	}
 }
 
 func TestClient_PackAuthcrypt_RequiresFromAndTo(t *testing.T) {
-	aliceDoc, _, _, _, client := setupAliceAndBob(t)
+	aliceDoc, _, _, client := setupAliceAndBob(t)
 	ctx := context.Background()
 
 	// Missing From
@@ -203,7 +205,7 @@ func TestClient_PackAuthcrypt_RequiresFromAndTo(t *testing.T) {
 		Body: json.RawMessage(`{}`),
 	}
 	_, err := client.PackAuthcrypt(ctx, msg1)
-	if err != ErrNoSender {
+	if !errors.Is(err, ErrNoSender) {
 		t.Fatalf("expected ErrNoSender, got %v", err)
 	}
 
@@ -215,13 +217,13 @@ func TestClient_PackAuthcrypt_RequiresFromAndTo(t *testing.T) {
 		Body: json.RawMessage(`{}`),
 	}
 	_, err = client.PackAuthcrypt(ctx, msg2)
-	if err != ErrNoRecipients {
+	if !errors.Is(err, ErrNoRecipients) {
 		t.Fatalf("expected ErrNoRecipients, got %v", err)
 	}
 }
 
 func TestClient_Unpack_InvalidMessage(t *testing.T) {
-	_, _, _, _, client := setupAliceAndBob(t)
+	_, _, _, client := setupAliceAndBob(t)
 	ctx := context.Background()
 
 	_, err := client.Unpack(ctx, []byte("not valid at all"))

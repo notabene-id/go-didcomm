@@ -2,6 +2,7 @@ package didcomm
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/lestrrat-go/jwx/v3/jwk"
@@ -59,7 +60,7 @@ func TestAnoncryptAndDecrypt(t *testing.T) {
 
 func TestAnoncrypt_NoRecipients(t *testing.T) {
 	_, err := anoncrypt([]byte(`{}`), nil)
-	if err != ErrNoRecipients {
+	if !errors.Is(err, ErrNoRecipients) {
 		t.Fatalf("expected ErrNoRecipients, got %v", err)
 	}
 }
@@ -162,16 +163,10 @@ func TestComputeAPV(t *testing.T) {
 	}
 	_ = k2.Set(jwk.KeyIDKey, "kid-a")
 
-	apv1, err := computeAPV([]jwk.Key{k1, k2})
-	if err != nil {
-		t.Fatal(err)
-	}
+	apv1 := computeAPV([]jwk.Key{k1, k2})
 
 	// Order shouldn't matter — kids are sorted
-	apv2, err := computeAPV([]jwk.Key{k2, k1})
-	if err != nil {
-		t.Fatal(err)
-	}
+	apv2 := computeAPV([]jwk.Key{k2, k1})
 
 	if string(apv1) != string(apv2) {
 		t.Fatal("APV should be deterministic regardless of key order")

@@ -49,7 +49,7 @@ func anoncrypt(payload []byte, recipientKeys []jwk.Key) ([]byte, error) {
 
 	encrypted, err := jwe.Encrypt(payload, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrEncryptionFailed, err)
+		return nil, fmt.Errorf("%w: %w", ErrEncryptionFailed, err)
 	}
 	return encrypted, nil
 }
@@ -61,7 +61,7 @@ func anonDecrypt(encrypted []byte, privateKey jwk.Key) ([]byte, error) {
 		jwe.WithKey(jwa.ECDH_ES_A256KW(), privateKey),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrDecryptionFailed, err)
+		return nil, fmt.Errorf("%w: %w", ErrDecryptionFailed, err)
 	}
 	return payload, nil
 }
@@ -69,7 +69,7 @@ func anonDecrypt(encrypted []byte, privateKey jwk.Key) ([]byte, error) {
 // computeAPV computes the Agreement PartyVInfo for DIDComm v2.
 // It's SHA-256 of the sorted, dot-joined key IDs.
 // Currently unused due to jwx v3 X25519 KDF bug, but kept for future use.
-func computeAPV(keys []jwk.Key) ([]byte, error) {
+func computeAPV(keys []jwk.Key) []byte {
 	kids := make([]string, 0, len(keys))
 	for _, k := range keys {
 		kid, ok := k.KeyID()
@@ -83,7 +83,7 @@ func computeAPV(keys []jwk.Key) ([]byte, error) {
 	joined := strings.Join(kids, ".")
 
 	hash := sha256.Sum256([]byte(joined))
-	return hash[:], nil
+	return hash[:]
 }
 
 // parseJWEHeaders extracts the protected headers from a JWE message.

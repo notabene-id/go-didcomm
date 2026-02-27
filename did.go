@@ -28,17 +28,17 @@ type VerificationMethod struct {
 
 // DIDDocument is a thin DID document with only DIDComm-relevant fields.
 type DIDDocument struct {
-	ID                   string               `json:"id"`
-	Authentication       []VerificationMethod  `json:"authentication,omitempty"`
-	KeyAgreement         []VerificationMethod  `json:"keyAgreement,omitempty"`
-	Service              []Service             `json:"service,omitempty"`
+	ID             string               `json:"id"`
+	Authentication []VerificationMethod `json:"authentication,omitempty"`
+	KeyAgreement   []VerificationMethod `json:"keyAgreement,omitempty"`
+	Service        []Service            `json:"service,omitempty"`
 }
 
 // Service represents a DID document service entry.
 type Service struct {
-	ID              string   `json:"id"`
-	Type            string   `json:"type"`
-	ServiceEndpoint string   `json:"serviceEndpoint"`
+	ID              string `json:"id"`
+	Type            string `json:"type"`
+	ServiceEndpoint string `json:"serviceEndpoint"`
 }
 
 // GenerateDIDKey generates a new did:key with Ed25519 signing and X25519 encryption keys.
@@ -102,7 +102,7 @@ func GenerateDIDKey() (*DIDDocument, *KeyPair, error) {
 
 // GenerateDIDWeb generates a did:web with Ed25519/X25519 keys.
 // The caller is responsible for hosting the returned DID document at the appropriate URL.
-func GenerateDIDWeb(domain string, path string) (*DIDDocument, *KeyPair, error) {
+func GenerateDIDWeb(domain, path string) (*DIDDocument, *KeyPair, error) {
 	kp, err := GenerateKeyPair()
 	if err != nil {
 		return nil, nil, err
@@ -170,8 +170,10 @@ func encodeDIDKeyFragment(codec uint64, pubKeyBytes []byte) string {
 	// Encode multicodec as unsigned varint
 	buf := make([]byte, binary.MaxVarintLen64)
 	n := binary.PutUvarint(buf, codec)
-	multicodecBytes := append(buf[:n], pubKeyBytes...)
-	return "z" + base58.Encode(multicodecBytes)
+	prefixed := make([]byte, 0, n+len(pubKeyBytes))
+	prefixed = append(prefixed, buf[:n]...)
+	prefixed = append(prefixed, pubKeyBytes...)
+	return "z" + base58.Encode(prefixed)
 }
 
 // Resolver resolves DIDs to DID documents.
