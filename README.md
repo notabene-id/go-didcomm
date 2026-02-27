@@ -100,6 +100,70 @@ type SecretsResolver interface {
 }
 ```
 
+## CLI
+
+A command-line tool for DIDComm v2 operations: generate identities, pack/unpack messages, and send to endpoints.
+
+### Install
+
+```bash
+go install github.com/Notabene-id/go-didcomm/cmd/didcomm@latest
+```
+
+### Commands
+
+```
+didcomm did generate-key [--output-dir <dir>]
+didcomm did generate-web --domain <d> [--path <p>] [--service-endpoint <url>] [--output-dir <dir>]
+didcomm pack signed    --key-file <f> --did-doc <f> [--message <m>]
+didcomm pack anoncrypt --did-doc <f> [--message <m>]
+didcomm pack authcrypt --key-file <f> --did-doc <f> [--message <m>]
+didcomm unpack         --key-file <f> [--did-doc <f>] [--message <m>]
+didcomm send           --to <url> [--message <m>]
+```
+
+The `--message` flag accepts `-` for stdin (default), `@filename` to read from a file, or an inline JSON string.
+
+### Walkthrough
+
+Generate identities for Alice and Bob:
+
+```bash
+didcomm did generate-key --output-dir alice
+didcomm did generate-key --output-dir bob
+```
+
+This creates `did-doc.json` (public DID document) and `keys.json` (private JWK Set) in each directory.
+
+Create a message and pack it with authenticated encryption:
+
+```bash
+ALICE_DID=$(jq -r .id alice/did-doc.json)
+BOB_DID=$(jq -r .id bob/did-doc.json)
+
+echo "{\"id\":\"1\",\"type\":\"https://example.com/hello\",\"from\":\"$ALICE_DID\",\"to\":[\"$BOB_DID\"],\"body\":{\"text\":\"hi\"}}" | \
+  didcomm pack authcrypt \
+    --key-file alice/keys.json \
+    --did-doc alice/did-doc.json,bob/did-doc.json > packed.json
+```
+
+Unpack with Bob's keys:
+
+```bash
+didcomm unpack \
+  --key-file bob/keys.json \
+  --did-doc alice/did-doc.json,bob/did-doc.json \
+  --message @packed.json
+```
+
+Send a packed message to an endpoint:
+
+```bash
+didcomm send --to https://example.com/didcomm --message @packed.json
+```
+
+The content type is auto-detected (`application/didcomm-encrypted+json`, `application/didcomm-signed+json`, or `application/didcomm-plain+json`).
+
 ## Development
 
 ### Prerequisites
@@ -137,6 +201,8 @@ go test -cover ./...
 ├── authcrypt.go      # Authenticated encryption (sign-then-encrypt)
 ├── sign.go           # JWS signing and verification
 ├── errors.go         # Sentinel errors
+├── cmd/
+│   └── didcomm/      # CLI tool
 └── internal/
     └── convert/      # Ed25519 ↔ X25519 key conversion
 ```
