@@ -47,6 +47,17 @@ Pack operations resolve the sender's private key via `Resolver` → `DIDDocument
 
 APV (Agreement PartyVInfo) is omitted from JWE headers due to a jwx v3 bug where X25519 ECDH-ES KDF ignores apu/apv during encryption but uses them during decryption. See `encrypt.go`.
 
+## Pre-push checklist
+
+**Always run both the linter and tests locally before pushing:**
+
+```bash
+golangci-lint run ./...
+go test ./...
+```
+
+Fix any lint errors or test failures before pushing. CI runs both checks and will block the PR if either fails.
+
 ## Lint rules
 
 The `.golangci.yml` uses golangci-lint v2 format (`version: "2"`). Key rules:
