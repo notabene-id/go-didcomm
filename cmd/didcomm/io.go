@@ -1,8 +1,6 @@
 package main
 
 import (
-	"net/http"
-
 	"github.com/Notabene-id/go-didcomm/cli"
 
 	didcomm "github.com/Notabene-id/go-didcomm"
@@ -35,10 +33,6 @@ func loadDIDDocs(paths string) (*didcomm.InMemoryResolver, error) {
 	return cli.LoadDIDDocs(paths)
 }
 
-func buildResolverWithOverrides(didDocPaths string) (*didcomm.MultiResolver, error) {
-	return cli.BuildResolverWithOverrides(didDocPaths)
-}
-
 func buildClient(keyFile, didDocPaths string) (*didcomm.Client, error) {
 	return cli.BuildClient(keyFile, didDocPaths)
 }
@@ -50,8 +44,3 @@ func detectContentType(data []byte) string {
 func parseMessage(data []byte) (*didcomm.Message, error) {
 	return cli.ParseMessage(data)
 }
-
-// httpClient delegates to cli.HTTPClient for backward compatibility with tests.
-var httpClient interface {
-	Do(req *http.Request) (*http.Response, error)
-} = http.DefaultClient
