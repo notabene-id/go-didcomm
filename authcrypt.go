@@ -38,8 +38,7 @@ func authcryptEnvelope(signed []byte, senderKID string, recipientKeys []jwk.Key)
 			return nil, err
 		}
 	}
-	opts = append(opts, jwe.WithProtectedHeaders(hdrs))
-	opts = append(opts, jwe.WithJSON())
+	opts = append(opts, jwe.WithProtectedHeaders(hdrs), jwe.WithJSON())
 
 	encrypted, err := jwe.Encrypt(signed, opts...)
 	if err != nil {

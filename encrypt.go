@@ -38,8 +38,7 @@ func anoncrypt(payload []byte, recipientKeys []jwk.Key) ([]byte, error) {
 	// However, jwx v3 has a bug where X25519 encryption ignores apu/apv in the Concat KDF
 	// while decryption uses them, causing a mismatch. APV is omitted until this is fixed.
 
-	opts = append(opts, jwe.WithProtectedHeaders(hdrs))
-	opts = append(opts, jwe.WithJSON())
+	opts = append(opts, jwe.WithProtectedHeaders(hdrs), jwe.WithJSON())
 
 	encrypted, err := jwe.Encrypt(payload, opts...)
 	if err != nil {

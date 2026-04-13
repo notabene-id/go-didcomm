@@ -205,8 +205,8 @@ func TestAuthcrypt_MultipleRecipients(t *testing.T) {
 		t.Fatal("bob1 verify:", err)
 	}
 	var msg1 Message
-	if err := json.Unmarshal(verified1, &msg1); err != nil {
-		t.Fatal(err)
+	if unmarshalErr := json.Unmarshal(verified1, &msg1); unmarshalErr != nil {
+		t.Fatal(unmarshalErr)
 	}
 	if msg1.ID != "1" {
 		t.Fatalf("bob1: expected ID=1, got %s", msg1.ID)

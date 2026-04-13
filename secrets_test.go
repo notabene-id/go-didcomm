@@ -20,12 +20,8 @@ func TestInMemorySecretsStore_StoreAndSign(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := kp.SigningJWK.Set(jwk.KeyIDKey, "sig-key-1"); err != nil {
-		t.Fatal(err)
-	}
-	if err := kp.EncryptionJWK.Set(jwk.KeyIDKey, "enc-key-1"); err != nil {
-		t.Fatal(err)
-	}
+	fatalOnErr(t, kp.SigningJWK.Set(jwk.KeyIDKey, "sig-key-1"))
+	fatalOnErr(t, kp.EncryptionJWK.Set(jwk.KeyIDKey, "enc-key-1"))
 
 	store.Store(kp)
 
@@ -63,9 +59,7 @@ func TestInMemorySecretsStore_StoreKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := kp.SigningJWK.Set(jwk.KeyIDKey, "my-key"); err != nil {
-		t.Fatal(err)
-	}
+	fatalOnErr(t, kp.SigningJWK.Set(jwk.KeyIDKey, "my-key"))
 
 	store.StoreKey(kp.SigningJWK)
 
@@ -93,8 +87,8 @@ func TestInMemorySecretsStore_ConcurrentAccess(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			if err := kp.SigningJWK.Set(jwk.KeyIDKey, "concurrent-key"); err != nil {
-				t.Error(err)
+			if setErr := kp.SigningJWK.Set(jwk.KeyIDKey, "concurrent-key"); setErr != nil {
+				t.Error(setErr)
 				return
 			}
 			store.Store(kp)
@@ -166,5 +160,12 @@ func TestInMemorySecretsStore_SignAndDecryptRoundTrip(t *testing.T) {
 
 	if string(payload) != `{"data":"secret"}` {
 		t.Fatalf("payload = %s", payload)
+	}
+}
+
+func fatalOnErr(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
 	}
 }
