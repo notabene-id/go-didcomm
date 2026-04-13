@@ -38,7 +38,7 @@ func (r *DIDWebResolver) Resolve(ctx context.Context, did string) (*DIDDocument,
 	}
 	req.Header.Set("Accept", "application/did+json")
 
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) //nolint:gosec // URL is derived from DID identifier; callers control input
 	if err != nil {
 		return nil, fmt.Errorf("fetch DID document for %s: %w", did, err)
 	}

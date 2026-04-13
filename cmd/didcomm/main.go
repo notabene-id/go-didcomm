@@ -71,7 +71,7 @@ func main() {
 	case "help", "--help", "-h":
 		fmt.Print(usage)
 	default:
-		fmt.Fprintln(os.Stderr, "unknown command: "+os.Args[1]+"\n")
+		fmt.Fprintln(os.Stderr, "unknown command: "+os.Args[1]+"\n") //nolint:gosec // CLI stderr output, no XSS risk
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(1)
 	}
