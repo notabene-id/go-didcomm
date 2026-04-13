@@ -6,9 +6,13 @@ import (
 	"testing"
 
 	"github.com/lestrrat-go/jwx/v3/jwk"
+	"github.com/lestrrat-go/jwx/v3/jws"
 )
 
-func TestInMemorySecretsStore_StoreAndGetKey(t *testing.T) {
+// Verify InMemorySecretsStore implements CryptoOperations.
+var _ CryptoOperations = (*InMemorySecretsStore)(nil)
+
+func TestInMemorySecretsStore_StoreAndSign(t *testing.T) {
 	store := NewInMemorySecretsStore()
 	ctx := context.Background()
 
@@ -16,29 +20,23 @@ func TestInMemorySecretsStore_StoreAndGetKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	// Set KIDs on keys
-	_ = kp.SigningJWK.Set(jwk.KeyIDKey, "sig-key-1")
-	_ = kp.EncryptionJWK.Set(jwk.KeyIDKey, "enc-key-1")
+	if err := kp.SigningJWK.Set(jwk.KeyIDKey, "sig-key-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := kp.EncryptionJWK.Set(jwk.KeyIDKey, "enc-key-1"); err != nil {
+		t.Fatal(err)
+	}
 
 	store.Store(kp)
 
-	// Retrieve signing key
-	sigKey, err := store.GetKey(ctx, "sig-key-1")
+	// Sign with stored key
+	hdrs := jws.NewHeaders()
+	signed, err := store.Sign(ctx, "sig-key-1", []byte(`test`), hdrs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if kid, _ := sigKey.KeyID(); kid != "sig-key-1" {
-		t.Fatalf("expected kid=sig-key-1, got %s", kid)
-	}
-
-	// Retrieve encryption key
-	encKey, err := store.GetKey(ctx, "enc-key-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if kid, _ := encKey.KeyID(); kid != "enc-key-1" {
-		t.Fatalf("expected kid=enc-key-1, got %s", kid)
+	if len(signed) == 0 {
+		t.Fatal("signed should not be empty")
 	}
 }
 
@@ -46,7 +44,12 @@ func TestInMemorySecretsStore_KeyNotFound(t *testing.T) {
 	store := NewInMemorySecretsStore()
 	ctx := context.Background()
 
-	_, err := store.GetKey(ctx, "nonexistent")
+	_, err := store.Sign(ctx, "nonexistent", []byte(`test`), jws.NewHeaders())
+	if !errors.Is(err, ErrKeyNotFound) {
+		t.Fatalf("expected ErrKeyNotFound, got %v", err)
+	}
+
+	_, err = store.Decrypt(ctx, "nonexistent", []byte(`jwe`))
 	if !errors.Is(err, ErrKeyNotFound) {
 		t.Fatalf("expected ErrKeyNotFound, got %v", err)
 	}
@@ -56,20 +59,24 @@ func TestInMemorySecretsStore_StoreKey(t *testing.T) {
 	store := NewInMemorySecretsStore()
 	ctx := context.Background()
 
-	key, err := jwk.Import([]byte("test-symmetric-key-32-bytes!!!!"))
+	kp, err := GenerateKeyPair()
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = key.Set(jwk.KeyIDKey, "my-key")
+	if err := kp.SigningJWK.Set(jwk.KeyIDKey, "my-key"); err != nil {
+		t.Fatal(err)
+	}
 
-	store.StoreKey(key)
+	store.StoreKey(kp.SigningJWK)
 
-	got, err := store.GetKey(ctx, "my-key")
+	// Should be able to sign with the stored key
+	hdrs := jws.NewHeaders()
+	signed, err := store.Sign(ctx, "my-key", []byte(`test`), hdrs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if kid, _ := got.KeyID(); kid != "my-key" {
-		t.Fatalf("expected kid=my-key, got %s", kid)
+	if len(signed) == 0 {
+		t.Fatal("signed should not be empty")
 	}
 }
 
@@ -77,7 +84,6 @@ func TestInMemorySecretsStore_ConcurrentAccess(t *testing.T) {
 	store := NewInMemorySecretsStore()
 	ctx := context.Background()
 
-	// Store keys concurrently
 	done := make(chan struct{})
 	for range 10 {
 		go func() {
@@ -87,7 +93,10 @@ func TestInMemorySecretsStore_ConcurrentAccess(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			_ = kp.SigningJWK.Set(jwk.KeyIDKey, "concurrent-key")
+			if err := kp.SigningJWK.Set(jwk.KeyIDKey, "concurrent-key"); err != nil {
+				t.Error(err)
+				return
+			}
 			store.Store(kp)
 		}()
 	}
@@ -95,12 +104,67 @@ func TestInMemorySecretsStore_ConcurrentAccess(t *testing.T) {
 		<-done
 	}
 
-	// Should be able to retrieve
-	_, err := store.GetKey(ctx, "concurrent-key")
+	// Should be able to sign
+	hdrs := jws.NewHeaders()
+	_, err := store.Sign(ctx, "concurrent-key", []byte(`test`), hdrs)
 	if err != nil {
 		t.Fatal(err)
 	}
 }
 
-// Verify InMemorySecretsStore implements SecretsResolver.
-var _ SecretsResolver = (*InMemorySecretsStore)(nil)
+func TestInMemorySecretsStore_SignAndDecryptRoundTrip(t *testing.T) {
+	_, aliceKP, err := GenerateDIDKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, bobKP, err := GenerateDIDKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aliceStore := NewInMemorySecretsStore()
+	aliceStore.Store(aliceKP)
+	bobStore := NewInMemorySecretsStore()
+	bobStore.Store(bobKP)
+
+	ctx := context.Background()
+
+	// Alice signs
+	aliceSignKID, _ := aliceKP.SigningJWK.KeyID()
+	hdrs, err := buildSigningHeaders(aliceSignKID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := aliceStore.Sign(ctx, aliceSignKID, []byte(`{"data":"secret"}`), hdrs)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Encrypt for Bob
+	bobEncPub, err := bobKP.EncryptionPublicJWK()
+	if err != nil {
+		t.Fatal(err)
+	}
+	encrypted, err := anoncrypt(signed, []jwk.Key{bobEncPub})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Bob decrypts
+	bobEncKID, _ := bobKP.EncryptionJWK.KeyID()
+	decrypted, err := bobStore.Decrypt(ctx, bobEncKID, encrypted)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify Alice's signature
+	alicePub, _ := aliceKP.SigningPublicJWK()
+	payload, err := verifySignature(decrypted, alicePub)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(payload) != `{"data":"secret"}` {
+		t.Fatalf("payload = %s", payload)
+	}
+}

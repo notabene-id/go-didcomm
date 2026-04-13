@@ -8,28 +8,6 @@ import (
 	"github.com/lestrrat-go/jwx/v3/jws"
 )
 
-// signMessage creates a JWS compact serialization of the payload using EdDSA.
-func signMessage(payload []byte, signingKey jwk.Key) ([]byte, error) {
-	hdrs := jws.NewHeaders()
-	if kid, ok := signingKey.KeyID(); ok && kid != "" {
-		if err := mustSet(hdrs, jws.KeyIDKey, kid); err != nil {
-			return nil, err
-		}
-	}
-	if err := mustSet(hdrs, jws.TypeKey, "application/didcomm-signed+json"); err != nil {
-		return nil, err
-	}
-
-	signed, err := jws.Sign(
-		payload,
-		jws.WithKey(jwa.EdDSA(), signingKey, jws.WithProtectedHeaders(hdrs)),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrSigningFailed, err)
-	}
-	return signed, nil
-}
-
 // verifySignature verifies a JWS compact serialization and returns the payload.
 func verifySignature(signed []byte, publicKey jwk.Key) ([]byte, error) {
 	payload, err := jws.Verify(

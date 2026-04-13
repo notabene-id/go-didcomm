@@ -1,6 +1,7 @@
 package didcomm
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -8,8 +9,25 @@ import (
 	"github.com/lestrrat-go/jwx/v3/jwk"
 )
 
+// signAndEncrypt is a test helper that performs authcrypt through CryptoOperations.
+func signAndEncrypt(t *testing.T, signer *InMemorySecretsStore, signingKID string, payload []byte, recipientKeys []jwk.Key) []byte {
+	t.Helper()
+	hdrs, err := buildSigningHeaders(signingKID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := signer.Sign(context.Background(), signingKID, payload, hdrs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encrypted, err := authcryptEnvelope(signed, signingKID, recipientKeys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encrypted
+}
+
 func TestAuthcryptRoundTrip(t *testing.T) {
-	// Generate Alice (sender) and Bob (recipient)
 	_, aliceKP, err := GenerateDIDKey()
 	if err != nil {
 		t.Fatal(err)
@@ -24,40 +42,40 @@ func TestAuthcryptRoundTrip(t *testing.T) {
 		Type: "https://example.com/test",
 		Body: json.RawMessage(`{"hello":"world"}`),
 	}
-
 	payload, err := json.Marshal(msg)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Get Bob's public encryption key
+	aliceSecrets := NewInMemorySecretsStore()
+	aliceSecrets.Store(aliceKP)
+	aliceSignKID, _ := aliceKP.SigningJWK.KeyID()
+
 	bobEncPub, err := bobKP.EncryptionPublicJWK()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Authcrypt: sign with Alice, encrypt for Bob
-	encrypted, err := authcrypt(payload, aliceKP.SigningJWK, []jwk.Key{bobEncPub})
-	if err != nil {
-		t.Fatal(err)
-	}
-
+	encrypted := signAndEncrypt(t, aliceSecrets, aliceSignKID, payload, []jwk.Key{bobEncPub})
 	if len(encrypted) == 0 {
 		t.Fatal("encrypted message should not be empty")
 	}
 
-	// Decrypt with Bob's private key
-	decrypted, err := anonDecrypt(encrypted, bobKP.EncryptionJWK)
+	// Decrypt with Bob's CryptoOperations
+	bobSecrets := NewInMemorySecretsStore()
+	bobSecrets.Store(bobKP)
+	bobEncKID, _ := bobKP.EncryptionJWK.KeyID()
+
+	decrypted, err := bobSecrets.Decrypt(context.Background(), bobEncKID, encrypted)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// The decrypted content is a JWS — verify it with Alice's public key
+	// Verify signature with Alice's public key
 	aliceSigPub, err := aliceKP.SigningPublicJWK()
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	verified, err := verifySignature(decrypted, aliceSigPub)
 	if err != nil {
 		t.Fatal(err)
@@ -86,19 +104,22 @@ func TestAuthcrypt_WrongSenderKey(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	aliceSecrets := NewInMemorySecretsStore()
+	aliceSecrets.Store(aliceKP)
+	aliceSignKID, _ := aliceKP.SigningJWK.KeyID()
+
 	bobEncPub, _ := bobKP.EncryptionPublicJWK()
-	encrypted, err := authcrypt([]byte(`{"id":"1","type":"t","body":{}}`), aliceKP.SigningJWK, []jwk.Key{bobEncPub})
+	encrypted := signAndEncrypt(t, aliceSecrets, aliceSignKID, []byte(`{"id":"1","type":"t","body":{}}`), []jwk.Key{bobEncPub})
+
+	bobSecrets := NewInMemorySecretsStore()
+	bobSecrets.Store(bobKP)
+	bobEncKID, _ := bobKP.EncryptionJWK.KeyID()
+	decrypted, err := bobSecrets.Decrypt(context.Background(), bobEncKID, encrypted)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Decrypt with Bob's key
-	decrypted, err := anonDecrypt(encrypted, bobKP.EncryptionJWK)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Try to verify with Eve's key — should fail
+	// Verify with Eve's key — should fail
 	eveSigPub, _ := eveKP.SigningPublicJWK()
 	_, err = verifySignature(decrypted, eveSigPub)
 	if err == nil {
@@ -120,22 +141,25 @@ func TestAuthcrypt_WrongRecipientKey(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	bobEncPub, _ := bobKP.EncryptionPublicJWK()
-	encrypted, err := authcrypt([]byte(`{"id":"1","type":"t","body":{}}`), aliceKP.SigningJWK, []jwk.Key{bobEncPub})
-	if err != nil {
-		t.Fatal(err)
-	}
+	aliceSecrets := NewInMemorySecretsStore()
+	aliceSecrets.Store(aliceKP)
+	aliceSignKID, _ := aliceKP.SigningJWK.KeyID()
 
-	// Try to decrypt with Eve's key — should fail
-	_, err = anonDecrypt(encrypted, eveKP.EncryptionJWK)
+	bobEncPub, _ := bobKP.EncryptionPublicJWK()
+	encrypted := signAndEncrypt(t, aliceSecrets, aliceSignKID, []byte(`{"id":"1","type":"t","body":{}}`), []jwk.Key{bobEncPub})
+
+	// Decrypt with Eve's key — should fail
+	eveSecrets := NewInMemorySecretsStore()
+	eveSecrets.Store(eveKP)
+	eveEncKID, _ := eveKP.EncryptionJWK.KeyID()
+	_, err = eveSecrets.Decrypt(context.Background(), eveEncKID, encrypted)
 	if err == nil {
 		t.Fatal("decryption should fail with wrong recipient key")
 	}
 }
 
-func TestAuthcrypt_NoRecipients(t *testing.T) {
-	_, aliceKP, _ := GenerateDIDKey()
-	_, err := authcrypt([]byte(`{}`), aliceKP.SigningJWK, nil)
+func TestAuthcryptEnvelope_NoRecipients(t *testing.T) {
+	_, err := authcryptEnvelope([]byte(`signed-jws`), "kid", nil)
 	if !errors.Is(err, ErrNoRecipients) {
 		t.Fatalf("expected ErrNoRecipients, got %v", err)
 	}
@@ -155,44 +179,50 @@ func TestAuthcrypt_MultipleRecipients(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	aliceSecrets := NewInMemorySecretsStore()
+	aliceSecrets.Store(aliceKP)
+	aliceSignKID, _ := aliceKP.SigningJWK.KeyID()
+
 	bob1EncPub, _ := bob1KP.EncryptionPublicJWK()
 	bob2EncPub, _ := bob2KP.EncryptionPublicJWK()
 
 	payload := []byte(`{"id":"1","type":"t","body":{}}`)
-	encrypted, err := authcrypt(payload, aliceKP.SigningJWK, []jwk.Key{bob1EncPub, bob2EncPub})
-	if err != nil {
-		t.Fatal(err)
-	}
+	encrypted := signAndEncrypt(t, aliceSecrets, aliceSignKID, payload, []jwk.Key{bob1EncPub, bob2EncPub})
 
 	aliceSigPub, _ := aliceKP.SigningPublicJWK()
+	ctx := context.Background()
 
-	// Both should be able to decrypt and verify
-	dec1, err := anonDecrypt(encrypted, bob1KP.EncryptionJWK)
+	// Both should decrypt and verify
+	bob1Secrets := NewInMemorySecretsStore()
+	bob1Secrets.Store(bob1KP)
+	bob1EncKID, _ := bob1KP.EncryptionJWK.KeyID()
+	dec1, err := bob1Secrets.Decrypt(ctx, bob1EncKID, encrypted)
 	if err != nil {
-		t.Fatal("bob1 should be able to decrypt:", err)
+		t.Fatal("bob1 decrypt:", err)
 	}
 	verified1, err := verifySignature(dec1, aliceSigPub)
 	if err != nil {
-		t.Fatal("bob1 should be able to verify:", err)
+		t.Fatal("bob1 verify:", err)
 	}
-
 	var msg1 Message
-	if unmarshalErr := json.Unmarshal(verified1, &msg1); unmarshalErr != nil {
-		t.Fatal(unmarshalErr)
+	if err := json.Unmarshal(verified1, &msg1); err != nil {
+		t.Fatal(err)
 	}
 	if msg1.ID != "1" {
 		t.Fatalf("bob1: expected ID=1, got %s", msg1.ID)
 	}
 
-	dec2, err := anonDecrypt(encrypted, bob2KP.EncryptionJWK)
+	bob2Secrets := NewInMemorySecretsStore()
+	bob2Secrets.Store(bob2KP)
+	bob2EncKID, _ := bob2KP.EncryptionJWK.KeyID()
+	dec2, err := bob2Secrets.Decrypt(ctx, bob2EncKID, encrypted)
 	if err != nil {
-		t.Fatal("bob2 should be able to decrypt:", err)
+		t.Fatal("bob2 decrypt:", err)
 	}
 	verified2, err := verifySignature(dec2, aliceSigPub)
 	if err != nil {
-		t.Fatal("bob2 should be able to verify:", err)
+		t.Fatal("bob2 verify:", err)
 	}
-
 	var msg2 Message
 	if err := json.Unmarshal(verified2, &msg2); err != nil {
 		t.Fatal(err)
