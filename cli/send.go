@@ -46,7 +46,7 @@ func RunSend(args []string) error {
 		return fmt.Errorf("read response: %w", err)
 	}
 
-	fmt.Fprintln(os.Stderr, "HTTP", resp.Status)
+	_, _ = os.Stderr.WriteString("HTTP " + resp.Status + "\n")
 	if resp.StatusCode >= 400 {
 		if len(body) > 0 {
 			fmt.Fprintf(os.Stderr, "%s\n", body)
