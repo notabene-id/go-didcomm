@@ -1,142 +1,153 @@
 package didcomm
 
 import (
-	"encoding/json"
+	"context"
 	"testing"
 
-	"github.com/lestrrat-go/jwx/v3/jwa"
-	"github.com/lestrrat-go/jwx/v3/jwk"
+	"github.com/lestrrat-go/jwx/v3/jws"
 )
 
 func TestSignAndVerify(t *testing.T) {
-	kp, err := GenerateKeyPair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = kp.SigningJWK.Set(jwk.KeyIDKey, "test-key-1")
-
-	msg := &Message{
-		ID:   "1",
-		Type: "https://example.com/test",
-		Body: json.RawMessage(`{"hello":"world"}`),
-	}
-
-	payload, err := json.Marshal(msg)
+	_, kp, err := GenerateDIDKey()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	signed, err := signMessage(payload, kp.SigningJWK)
+	secrets := NewInMemorySecretsStore()
+	secrets.Store(kp)
+	kid, _ := kp.SigningJWK.KeyID()
+
+	payload := []byte(`{"id":"1","type":"test","body":{}}`)
+
+	hdrs, err := buildSigningHeaders(kid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := secrets.Sign(context.Background(), kid, payload, hdrs)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	if len(signed) == 0 {
-		t.Fatal("signed message should not be empty")
+		t.Fatal("signed should not be empty")
 	}
 
-	pubJWK, err := kp.SigningPublicJWK()
+	pubKey, err := kp.SigningPublicJWK()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	verified, err := verifySignature(signed, pubJWK)
+	verified, err := verifySignature(signed, pubKey)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	var decoded Message
-	if err := json.Unmarshal(verified, &decoded); err != nil {
-		t.Fatal(err)
-	}
-
-	if decoded.ID != "1" {
-		t.Fatalf("expected ID=1, got %s", decoded.ID)
+	if string(verified) != string(payload) {
+		t.Fatalf("payload mismatch: got %s", verified)
 	}
 }
 
-func TestSignMessage_IncludesHeaders(t *testing.T) {
-	kp, err := GenerateKeyPair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = kp.SigningJWK.Set(jwk.KeyIDKey, "test-key-1")
-
-	signed, err := signMessage([]byte(`{}`), kp.SigningJWK)
+func TestSign_IncludesHeaders(t *testing.T) {
+	_, kp, err := GenerateDIDKey()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	hdrs, err := parseJWSHeaders(signed)
+	secrets := NewInMemorySecretsStore()
+	secrets.Store(kp)
+	kid, _ := kp.SigningJWK.KeyID()
+
+	hdrs, err := buildSigningHeaders(kid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := secrets.Sign(context.Background(), kid, []byte(`{}`), hdrs)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	alg, _ := hdrs.Algorithm()
-	if alg != jwa.EdDSA() {
-		t.Fatalf("expected EdDSA algorithm, got %s", alg)
+	parsedHdrs, err := parseJWSHeaders(signed)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	kid, ok := hdrs.KeyID()
-	if !ok || kid != "test-key-1" {
-		t.Fatalf("expected kid=test-key-1, got %s", kid)
+	gotKID, ok := parsedHdrs.KeyID()
+	if !ok || gotKID != kid {
+		t.Fatalf("kid = %q, want %q", gotKID, kid)
 	}
 
-	typ, ok := hdrs.Type()
-	if !ok || typ != "application/didcomm-signed+json" {
-		t.Fatalf("expected DIDComm signed type, got %s", typ)
+	var typ string
+	if err := parsedHdrs.Get(jws.TypeKey, &typ); err != nil {
+		t.Fatal(err)
+	}
+	if typ != "application/didcomm-signed+json" {
+		t.Fatalf("typ = %q", typ)
 	}
 }
 
 func TestVerifySignature_WrongKey(t *testing.T) {
-	kp1, err := GenerateKeyPair()
+	_, kp1, err := GenerateDIDKey()
 	if err != nil {
 		t.Fatal(err)
 	}
-	kp2, err := GenerateKeyPair()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	signed, err := signMessage([]byte(`{}`), kp1.SigningJWK)
+	_, kp2, err := GenerateDIDKey()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	wrongPubJWK, err := kp2.SigningPublicJWK()
+	secrets := NewInMemorySecretsStore()
+	secrets.Store(kp1)
+	kid, _ := kp1.SigningJWK.KeyID()
+
+	hdrs, err := buildSigningHeaders(kid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := secrets.Sign(context.Background(), kid, []byte(`{}`), hdrs)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = verifySignature(signed, wrongPubJWK)
+	wrongPub, _ := kp2.SigningPublicJWK()
+	_, err = verifySignature(signed, wrongPub)
 	if err == nil {
 		t.Fatal("verification should fail with wrong key")
 	}
 }
 
 func TestParseJWSHeaders(t *testing.T) {
-	kp, err := GenerateKeyPair()
+	_, kp, err := GenerateDIDKey()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	signed, err := signMessage([]byte(`{}`), kp.SigningJWK)
+	secrets := NewInMemorySecretsStore()
+	secrets.Store(kp)
+	kid, _ := kp.SigningJWK.KeyID()
+
+	hdrs, err := buildSigningHeaders(kid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, err := secrets.Sign(context.Background(), kid, []byte(`{}`), hdrs)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	hdrs, err := parseJWSHeaders(signed)
+	parsed, err := parseJWSHeaders(signed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hdrs == nil {
-		t.Fatal("headers should not be nil")
+
+	gotKID, ok := parsed.KeyID()
+	if !ok || gotKID == "" {
+		t.Fatal("expected non-empty kid")
 	}
 }
 
 func TestParseJWSHeaders_InvalidJWS(t *testing.T) {
 	_, err := parseJWSHeaders([]byte("not-a-jws"))
 	if err == nil {
-		t.Fatal("should fail on invalid JWS")
+		t.Fatal("expected error for invalid JWS")
 	}
 }

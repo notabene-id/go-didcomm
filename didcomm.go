@@ -8,6 +8,7 @@ import (
 
 	"github.com/lestrrat-go/jwx/v3/jwe"
 	"github.com/lestrrat-go/jwx/v3/jwk"
+	"github.com/lestrrat-go/jwx/v3/jws"
 )
 
 // UnpackResult contains the result of unpacking a DIDComm v2 message.
@@ -21,15 +22,12 @@ type UnpackResult struct {
 // Client provides DIDComm v2 pack and unpack operations.
 type Client struct {
 	resolver DIDResolver
-	secrets  SecretsResolver
+	crypto   CryptoOperations
 }
 
-// NewClient creates a new DIDComm client with the given DID resolver and secrets resolver.
-func NewClient(resolver DIDResolver, secrets SecretsResolver) *Client {
-	return &Client{
-		resolver: resolver,
-		secrets:  secrets,
-	}
+// NewClient creates a new DIDComm client.
+func NewClient(resolver DIDResolver, crypto CryptoOperations) *Client {
+	return &Client{resolver: resolver, crypto: crypto}
 }
 
 // PackSigned creates a JWS-signed DIDComm message.
@@ -42,7 +40,7 @@ func (c *Client) PackSigned(ctx context.Context, msg *Message) ([]byte, error) {
 		return nil, ErrNoSender
 	}
 
-	signingKey, err := c.getSenderSigningKey(ctx, msg.From)
+	kid, err := c.getSenderSigningKID(ctx, msg.From)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +50,11 @@ func (c *Client) PackSigned(ctx context.Context, msg *Message) ([]byte, error) {
 		return nil, fmt.Errorf("marshal message: %w", err)
 	}
 
-	return signMessage(payload, signingKey)
+	hdrs, err := buildSigningHeaders(kid)
+	if err != nil {
+		return nil, err
+	}
+	return c.crypto.Sign(ctx, kid, payload, hdrs)
 }
 
 // PackAnoncrypt creates an anonymous encrypted JWE DIDComm message.
@@ -91,7 +93,7 @@ func (c *Client) PackAuthcrypt(ctx context.Context, msg *Message) ([]byte, error
 		return nil, ErrNoRecipients
 	}
 
-	signingKey, err := c.getSenderSigningKey(ctx, msg.From)
+	kid, err := c.getSenderSigningKID(ctx, msg.From)
 	if err != nil {
 		return nil, err
 	}
@@ -106,29 +108,32 @@ func (c *Client) PackAuthcrypt(ctx context.Context, msg *Message) ([]byte, error
 		return nil, fmt.Errorf("marshal message: %w", err)
 	}
 
-	return authcrypt(payload, signingKey, recipientKeys)
+	hdrs, err := buildSigningHeaders(kid)
+	if err != nil {
+		return nil, err
+	}
+	signed, err := c.crypto.Sign(ctx, kid, payload, hdrs)
+	if err != nil {
+		return nil, fmt.Errorf("authcrypt sign: %w", err)
+	}
+
+	return authcryptEnvelope(signed, kid, recipientKeys)
 }
 
 // Unpack auto-detects the format (JWE, JWS, or plain JSON) and unpacks accordingly.
 func (c *Client) Unpack(ctx context.Context, envelope []byte) (*UnpackResult, error) {
 	envelope = bytes.TrimSpace(envelope)
 
-	// Try JWE first (compact: starts with "eyJ", JSON: starts with "{")
 	if isJWE(envelope) {
 		return c.unpackEncrypted(ctx, envelope)
 	}
-
-	// Try JWS
 	if isJWS(envelope) {
 		return c.unpackSigned(ctx, envelope)
 	}
-
-	// Try plain JSON
 	return c.unpackPlain(envelope)
 }
 
 func (c *Client) unpackEncrypted(ctx context.Context, encrypted []byte) (*UnpackResult, error) {
-	// Parse JWE to find recipient key IDs and check for skid
 	msg, err := jwe.Parse(encrypted)
 	if err != nil {
 		return nil, fmt.Errorf("parse JWE: %w", err)
@@ -139,7 +144,6 @@ func (c *Client) unpackEncrypted(ctx context.Context, encrypted []byte) (*Unpack
 		return nil, err
 	}
 
-	// Check for skid (sender key ID) — indicates authcrypt
 	hdrs := msg.ProtectedHeaders()
 	var skid string
 	if hdrs != nil {
@@ -151,7 +155,6 @@ func (c *Client) unpackEncrypted(ctx context.Context, encrypted []byte) (*Unpack
 		Anonymous: skid == "",
 	}
 
-	// If authcrypt (has skid), the decrypted content is a JWS — verify it
 	if skid != "" {
 		result.Signed = true
 		payload, verifyErr := c.verifyAuthcryptSender(ctx, decrypted, skid)
@@ -170,9 +173,7 @@ func (c *Client) unpackEncrypted(ctx context.Context, encrypted []byte) (*Unpack
 	return result, nil
 }
 
-// decryptJWE tries recipient keys and protected header KID to decrypt a JWE message.
 func (c *Client) decryptJWE(ctx context.Context, encrypted []byte, msg *jwe.Message) ([]byte, error) {
-	// Try to find a matching recipient key
 	for _, r := range msg.Recipients() {
 		hdr := r.Headers()
 		kid, ok := hdr.KeyID()
@@ -180,25 +181,17 @@ func (c *Client) decryptJWE(ctx context.Context, encrypted []byte, msg *jwe.Mess
 			continue
 		}
 
-		privKey, err := c.secrets.GetKey(ctx, kid)
-		if err != nil {
-			continue
-		}
-
-		decrypted, err := anonDecrypt(encrypted, privKey)
+		decrypted, err := c.crypto.Decrypt(ctx, kid, encrypted)
 		if err != nil {
 			continue
 		}
 		return decrypted, nil
 	}
 
-	// Try the protected header KID (single-recipient compact JWE)
 	if hdrs := msg.ProtectedHeaders(); hdrs != nil {
 		if kid, ok := hdrs.KeyID(); ok {
-			if privKey, err := c.secrets.GetKey(ctx, kid); err == nil {
-				if decrypted, err := anonDecrypt(encrypted, privKey); err == nil {
-					return decrypted, nil
-				}
+			if decrypted, err := c.crypto.Decrypt(ctx, kid, encrypted); err == nil {
+				return decrypted, nil
 			}
 		}
 	}
@@ -206,7 +199,6 @@ func (c *Client) decryptJWE(ctx context.Context, encrypted []byte, msg *jwe.Mess
 	return nil, fmt.Errorf("%w: no matching recipient key found", ErrDecryptionFailed)
 }
 
-// verifyAuthcryptSender verifies the JWS signature from an authcrypt sender.
 func (c *Client) verifyAuthcryptSender(ctx context.Context, signed []byte, skid string) ([]byte, error) {
 	senderPubKey, err := c.resolveKeyByKID(ctx, skid)
 	if err != nil {
@@ -216,7 +208,6 @@ func (c *Client) verifyAuthcryptSender(ctx context.Context, signed []byte, skid 
 }
 
 func (c *Client) unpackSigned(ctx context.Context, signed []byte) (*UnpackResult, error) {
-	// Parse JWS to find the signer's key ID
 	hdrs, err := parseJWSHeaders(signed)
 	if err != nil {
 		return nil, err
@@ -266,19 +257,19 @@ func (c *Client) unpackPlain(data []byte) (*UnpackResult, error) {
 	}, nil
 }
 
-// getSenderSigningKey retrieves the sender's private signing key from the secrets store.
-func (c *Client) getSenderSigningKey(ctx context.Context, did string) (jwk.Key, error) {
+// getSenderSigningKID resolves the sender's signing key ID from their DID document.
+func (c *Client) getSenderSigningKID(ctx context.Context, did string) (string, error) {
 	doc, err := c.resolver.Resolve(ctx, did)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	vm, err := doc.FindSigningKey()
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
-	return c.secrets.GetKey(ctx, vm.ID)
+	return vm.ID, nil
 }
 
 // getRecipientEncryptionKeys resolves public encryption keys for all recipients.
@@ -302,7 +293,6 @@ func (c *Client) getRecipientEncryptionKeys(ctx context.Context, dids []string) 
 
 // resolveKeyByKID finds a public key by its key ID across all stored DID documents.
 func (c *Client) resolveKeyByKID(ctx context.Context, kid string) (jwk.Key, error) {
-	// Extract the DID from the KID (KID format: did#fragment)
 	did := extractDIDFromKID(kid)
 	if did == "" {
 		return nil, fmt.Errorf("%w: cannot extract DID from kid %s", ErrKeyNotFound, kid)
@@ -313,14 +303,12 @@ func (c *Client) resolveKeyByKID(ctx context.Context, kid string) (jwk.Key, erro
 		return nil, err
 	}
 
-	// Search authentication keys
 	for _, vm := range doc.Authentication {
 		if vm.ID == kid {
 			return vm.PublicKey, nil
 		}
 	}
 
-	// Search key agreement keys
 	for _, vm := range doc.KeyAgreement {
 		if vm.ID == kid {
 			return vm.PublicKey, nil
@@ -340,14 +328,26 @@ func extractDIDFromKID(kid string) string {
 	return ""
 }
 
+// buildSigningHeaders creates the JWS protected headers for DIDComm signing.
+func buildSigningHeaders(kid string) (jws.Headers, error) {
+	hdrs := jws.NewHeaders()
+	if kid != "" {
+		if err := hdrs.Set(jws.KeyIDKey, kid); err != nil {
+			return nil, fmt.Errorf("set kid header: %w", err)
+		}
+	}
+	if err := hdrs.Set(jws.TypeKey, "application/didcomm-signed+json"); err != nil {
+		return nil, fmt.Errorf("set typ header: %w", err)
+	}
+	return hdrs, nil
+}
+
 // isJWE checks if the data looks like a JWE (compact or JSON serialization).
 func isJWE(data []byte) bool {
 	if len(data) == 0 {
 		return false
 	}
-	// JSON serialization
 	if data[0] == '{' {
-		// Check for JWE JSON fields
 		var peek struct {
 			Recipients json.RawMessage `json:"recipients"`
 			Ciphertext string          `json:"ciphertext"`
@@ -357,19 +357,15 @@ func isJWE(data []byte) bool {
 		}
 		return false
 	}
-	// Compact serialization: 5 base64url parts separated by dots
 	parts := bytes.Count(data, []byte("."))
 	return parts == 4
 }
 
 // isJWS checks if the data looks like a JWS (compact serialization).
-// JWS compact is always base64url.base64url.base64url (never starts with '{'),
-// while plain JSON always starts with '{'.
 func isJWS(data []byte) bool {
 	if len(data) == 0 || data[0] == '{' {
 		return false
 	}
-	// Compact: 3 base64url parts separated by dots
 	parts := bytes.Count(data, []byte("."))
 	return parts == 2
 }

@@ -1,6 +1,7 @@
 package didcomm
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -10,7 +11,6 @@ import (
 )
 
 func TestAnoncryptAndDecrypt(t *testing.T) {
-	// Generate recipient key pair
 	_, bobKP, err := GenerateDIDKey()
 	if err != nil {
 		t.Fatal(err)
@@ -21,30 +21,29 @@ func TestAnoncryptAndDecrypt(t *testing.T) {
 		Type: "https://example.com/test",
 		Body: json.RawMessage(`{"hello":"world"}`),
 	}
-
 	payload, err := json.Marshal(msg)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Get Bob's public encryption key
 	encPubJWK, err := bobKP.EncryptionPublicJWK()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Encrypt for Bob
 	encrypted, err := anoncrypt(payload, []jwk.Key{encPubJWK})
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	if len(encrypted) == 0 {
 		t.Fatal("encrypted message should not be empty")
 	}
 
-	// Decrypt with Bob's private key
-	decrypted, err := anonDecrypt(encrypted, bobKP.EncryptionJWK)
+	bobSecrets := NewInMemorySecretsStore()
+	bobSecrets.Store(bobKP)
+	bobEncKID, _ := bobKP.EncryptionJWK.KeyID()
+
+	decrypted, err := bobSecrets.Decrypt(context.Background(), bobEncKID, encrypted)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +52,6 @@ func TestAnoncryptAndDecrypt(t *testing.T) {
 	if err := json.Unmarshal(decrypted, &decoded); err != nil {
 		t.Fatal(err)
 	}
-
 	if decoded.ID != "1" {
 		t.Fatalf("expected ID=1, got %s", decoded.ID)
 	}
@@ -80,14 +78,17 @@ func TestAnoncrypt_MultipleRecipients(t *testing.T) {
 	bob2PubJWK, _ := bob2KP.EncryptionPublicJWK()
 
 	payload := []byte(`{"id":"1","type":"test","body":{}}`)
-
 	encrypted, err := anoncrypt(payload, []jwk.Key{bob1PubJWK, bob2PubJWK})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Both recipients should be able to decrypt
-	dec1, err := anonDecrypt(encrypted, bob1KP.EncryptionJWK)
+	ctx := context.Background()
+
+	bob1Secrets := NewInMemorySecretsStore()
+	bob1Secrets.Store(bob1KP)
+	bob1EncKID, _ := bob1KP.EncryptionJWK.KeyID()
+	dec1, err := bob1Secrets.Decrypt(ctx, bob1EncKID, encrypted)
 	if err != nil {
 		t.Fatal("bob1 should be able to decrypt:", err)
 	}
@@ -95,7 +96,10 @@ func TestAnoncrypt_MultipleRecipients(t *testing.T) {
 		t.Fatal("bob1 decrypted payload mismatch")
 	}
 
-	dec2, err := anonDecrypt(encrypted, bob2KP.EncryptionJWK)
+	bob2Secrets := NewInMemorySecretsStore()
+	bob2Secrets.Store(bob2KP)
+	bob2EncKID, _ := bob2KP.EncryptionJWK.KeyID()
+	dec2, err := bob2Secrets.Decrypt(ctx, bob2EncKID, encrypted)
 	if err != nil {
 		t.Fatal("bob2 should be able to decrypt:", err)
 	}
@@ -104,7 +108,7 @@ func TestAnoncrypt_MultipleRecipients(t *testing.T) {
 	}
 }
 
-func TestAnonDecrypt_WrongKey(t *testing.T) {
+func TestDecrypt_WrongKey(t *testing.T) {
 	_, bob1KP, err := GenerateDIDKey()
 	if err != nil {
 		t.Fatal(err)
@@ -115,13 +119,15 @@ func TestAnonDecrypt_WrongKey(t *testing.T) {
 	}
 
 	bob1PubJWK, _ := bob1KP.EncryptionPublicJWK()
-
 	encrypted, err := anoncrypt([]byte(`{}`), []jwk.Key{bob1PubJWK})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = anonDecrypt(encrypted, bob2KP.EncryptionJWK)
+	bob2Secrets := NewInMemorySecretsStore()
+	bob2Secrets.Store(bob2KP)
+	bob2EncKID, _ := bob2KP.EncryptionJWK.KeyID()
+	_, err = bob2Secrets.Decrypt(context.Background(), bob2EncKID, encrypted)
 	if err == nil {
 		t.Fatal("decryption should fail with wrong key")
 	}
@@ -134,7 +140,6 @@ func TestAnoncrypt_Headers(t *testing.T) {
 	}
 
 	encPubJWK, _ := bobKP.EncryptionPublicJWK()
-
 	encrypted, err := anoncrypt([]byte(`{}`), []jwk.Key{encPubJWK})
 	if err != nil {
 		t.Fatal(err)
