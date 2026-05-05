@@ -2,17 +2,34 @@ package didcomm
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
+	"github.com/lestrrat-go/jwx/v3/jwa"
+	"github.com/lestrrat-go/jwx/v3/jwe"
 	"github.com/lestrrat-go/jwx/v3/jwk"
+	"github.com/lestrrat-go/jwx/v3/jws"
 )
 
-// SecretsResolver provides access to private keys by key ID.
-type SecretsResolver interface {
-	GetKey(ctx context.Context, kid string) (jwk.Key, error)
+// CryptoOperations provides sealed signing and decryption operations.
+// Implementations hold private key material internally — callers receive
+// only the results of cryptographic operations, never raw keys.
+type CryptoOperations interface {
+	// Sign signs payload using the EdDSA key identified by kid.
+	// The provided headers are set as JWS protected headers.
+	//
+	// Implementations MUST emit JWS JSON serialization (flattened or general),
+	// per DIDComm v2 §Message Signing: "When transmitted in a normal JWM
+	// fashion, the JSON Serialization MUST be used." Compact serialization is
+	// not a conforming DIDComm transmission format.
+	Sign(ctx context.Context, kid string, payload []byte, headers jws.Headers) ([]byte, error)
+
+	// Decrypt decrypts a JWE message using the ECDH-ES+A256KW key identified by kid.
+	Decrypt(ctx context.Context, kid string, encrypted []byte) ([]byte, error)
 }
 
-// InMemorySecretsStore is a simple in-memory implementation of SecretsResolver.
+// InMemorySecretsStore is an in-memory implementation of CryptoOperations.
+// Private keys are held in memory and never exposed via a getter.
 type InMemorySecretsStore struct {
 	mu   sync.RWMutex
 	keys map[string]jwk.Key
@@ -48,8 +65,7 @@ func (s *InMemorySecretsStore) StoreKey(key jwk.Key) {
 	}
 }
 
-// GetKey retrieves a private key by its key ID.
-func (s *InMemorySecretsStore) GetKey(_ context.Context, kid string) (jwk.Key, error) {
+func (s *InMemorySecretsStore) getKey(kid string) (jwk.Key, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -58,4 +74,38 @@ func (s *InMemorySecretsStore) GetKey(_ context.Context, kid string) (jwk.Key, e
 		return nil, ErrKeyNotFound
 	}
 	return key, nil
+}
+
+// Sign signs payload using the key identified by kid.
+// Output uses JWS JSON serialization (flattened form for a single signer), as
+// required by DIDComm v2: "When transmitted in a normal JWM fashion, the JSON
+// Serialization MUST be used." Other CryptoOperations implementations should
+// emit JSON serialization for the same reason.
+func (s *InMemorySecretsStore) Sign(_ context.Context, kid string, payload []byte, headers jws.Headers) ([]byte, error) {
+	key, err := s.getKey(kid)
+	if err != nil {
+		return nil, err
+	}
+	signed, err := jws.Sign(
+		payload,
+		jws.WithJSON(),
+		jws.WithKey(jwa.EdDSA(), key, jws.WithProtectedHeaders(headers)),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrSigningFailed, err)
+	}
+	return signed, nil
+}
+
+// Decrypt decrypts a JWE message using the key identified by kid.
+func (s *InMemorySecretsStore) Decrypt(_ context.Context, kid string, encrypted []byte) ([]byte, error) {
+	key, err := s.getKey(kid)
+	if err != nil {
+		return nil, err
+	}
+	decrypted, err := jwe.Decrypt(encrypted, jwe.WithKey(jwa.ECDH_ES_A256KW(), key))
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrDecryptionFailed, err)
+	}
+	return decrypted, nil
 }

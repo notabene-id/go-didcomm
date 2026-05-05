@@ -688,19 +688,20 @@ func TestClient_PackSigned_OutputsJSON(t *testing.T) {
 }
 
 // Backward compatibility: compact-serialized JWS produced elsewhere must still unpack.
+// (Spec mandates JSON serialization for transmission, but we accept compact leniently.)
 func TestClient_Unpack_CompactJWS(t *testing.T) {
-	aliceDoc, _, _, client := setupAliceAndBob(t)
-	ctx := context.Background()
-
-	signingKey, err := client.getSenderSigningKey(ctx, aliceDoc.ID)
+	resolver := NewInMemoryResolver()
+	aliceDoc, aliceKP, err := GenerateDIDKey()
 	if err != nil {
 		t.Fatal(err)
 	}
+	resolver.Store(aliceDoc)
+	client := NewClient(resolver, NewInMemorySecretsStore())
+	ctx := context.Background()
 
+	kid, _ := aliceKP.SigningJWK.KeyID()
 	hdrs := jws.NewHeaders()
-	if kid, ok := signingKey.KeyID(); ok && kid != "" {
-		_ = hdrs.Set(jws.KeyIDKey, kid)
-	}
+	_ = hdrs.Set(jws.KeyIDKey, kid)
 	_ = hdrs.Set(jws.TypeKey, "application/didcomm-signed+json")
 
 	msg := &Message{
@@ -715,7 +716,7 @@ func TestClient_Unpack_CompactJWS(t *testing.T) {
 	}
 
 	// Sign without jws.WithJSON — produces compact serialization.
-	compact, err := jws.Sign(payload, jws.WithKey(jwa.EdDSA(), signingKey, jws.WithProtectedHeaders(hdrs)))
+	compact, err := jws.Sign(payload, jws.WithKey(jwa.EdDSA(), aliceKP.SigningJWK, jws.WithProtectedHeaders(hdrs)))
 	if err != nil {
 		t.Fatal(err)
 	}
