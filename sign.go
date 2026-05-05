@@ -8,7 +8,7 @@ import (
 	"github.com/lestrrat-go/jwx/v3/jws"
 )
 
-// verifySignature verifies a JWS compact serialization and returns the payload.
+// verifySignature verifies a JWS (compact or JSON serialization) and returns the payload.
 func verifySignature(signed []byte, publicKey jwk.Key) ([]byte, error) {
 	payload, err := jws.Verify(
 		signed,

@@ -59,6 +59,10 @@ go test ./...
 
 Fix any issues before committing. CI runs linter and tests and will block the PR if either fails.
 
+## Changelog
+
+Update `CHANGELOG.md` under `## [Unreleased]` for any user-visible change. On release, rename the `Unreleased` heading to the new version + date and bump `cmd/didcomm/main.go` `version` to match. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) with semver.
+
 ## Lint rules
 
 The `.golangci.yml` uses golangci-lint v2 format (`version: "2"`). Key rules:

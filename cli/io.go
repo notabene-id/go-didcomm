@@ -144,31 +144,48 @@ func BuildClient(keyFile, didDocPaths string) (*didcomm.Client, error) {
 }
 
 const (
+	// DIDComm v2 media types (RFC 6839 +json suffix indicates JSON serialization).
 	ContentTypeEncrypted = "application/didcomm-encrypted+json"
 	ContentTypeSigned    = "application/didcomm-signed+json"
 	ContentTypePlain     = "application/didcomm-plain+json"
+	// ContentTypeJOSE is the RFC 7515/7516 media type for JOSE compact serialization.
+	// DIDComm v2 mandates JSON serialization for transmission, so encountering compact
+	// data here is non-conforming; we still label it accurately rather than as +json.
+	ContentTypeJOSE = "application/jose"
 )
 
-// DetectContentType returns the DIDComm media type based on the envelope format.
+// DetectContentType returns the media type for the envelope format.
+// JSON-serialized DIDComm envelopes get the corresponding application/didcomm-*+json
+// type. Compact-serialized JWS/JWE get application/jose, since the +json DIDComm
+// types specifically signal JSON serialization (per RFC 6839 §3.1).
 func DetectContentType(data []byte) string {
 	data = []byte(strings.TrimSpace(string(data)))
-	dots := strings.Count(string(data), ".")
 
-	switch dots {
-	case 4:
-		return ContentTypeEncrypted
-	case 2:
-		return ContentTypeSigned
-	default:
-		// JSON serialization JWE or plain
-		if len(data) > 0 && data[0] == '{' {
-			var peek struct {
-				Ciphertext string `json:"ciphertext"`
-			}
-			if err := json.Unmarshal(data, &peek); err == nil && peek.Ciphertext != "" {
+	// JSON serialization (JWE, JWS, or plain message)
+	if len(data) > 0 && data[0] == '{' {
+		var peek struct {
+			Ciphertext string          `json:"ciphertext"`
+			Payload    string          `json:"payload"`
+			Signature  string          `json:"signature"`
+			Protected  string          `json:"protected"`
+			Signatures json.RawMessage `json:"signatures"`
+		}
+		if err := json.Unmarshal(data, &peek); err == nil {
+			if peek.Ciphertext != "" {
 				return ContentTypeEncrypted
 			}
+			if peek.Payload != "" && (peek.Signature != "" || peek.Protected != "" || len(peek.Signatures) > 0) {
+				return ContentTypeSigned
+			}
 		}
+		return ContentTypePlain
+	}
+
+	// Compact serialization: JWS (3 parts) or JWE (5 parts) — labeled application/jose.
+	switch strings.Count(string(data), ".") {
+	case 2, 4:
+		return ContentTypeJOSE
+	default:
 		return ContentTypePlain
 	}
 }

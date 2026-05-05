@@ -17,6 +17,11 @@ import (
 type CryptoOperations interface {
 	// Sign signs payload using the EdDSA key identified by kid.
 	// The provided headers are set as JWS protected headers.
+	//
+	// Implementations MUST emit JWS JSON serialization (flattened or general),
+	// per DIDComm v2 §Message Signing: "When transmitted in a normal JWM
+	// fashion, the JSON Serialization MUST be used." Compact serialization is
+	// not a conforming DIDComm transmission format.
 	Sign(ctx context.Context, kid string, payload []byte, headers jws.Headers) ([]byte, error)
 
 	// Decrypt decrypts a JWE message using the ECDH-ES+A256KW key identified by kid.
@@ -72,12 +77,20 @@ func (s *InMemorySecretsStore) getKey(kid string) (jwk.Key, error) {
 }
 
 // Sign signs payload using the key identified by kid.
+// Output uses JWS JSON serialization (flattened form for a single signer), as
+// required by DIDComm v2: "When transmitted in a normal JWM fashion, the JSON
+// Serialization MUST be used." Other CryptoOperations implementations should
+// emit JSON serialization for the same reason.
 func (s *InMemorySecretsStore) Sign(_ context.Context, kid string, payload []byte, headers jws.Headers) ([]byte, error) {
 	key, err := s.getKey(kid)
 	if err != nil {
 		return nil, err
 	}
-	signed, err := jws.Sign(payload, jws.WithKey(jwa.EdDSA(), key, jws.WithProtectedHeaders(headers)))
+	signed, err := jws.Sign(
+		payload,
+		jws.WithJSON(),
+		jws.WithKey(jwa.EdDSA(), key, jws.WithProtectedHeaders(headers)),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrSigningFailed, err)
 	}

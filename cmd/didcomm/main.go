@@ -5,7 +5,7 @@ import (
 	"os"
 )
 
-const version = "0.1.0"
+const version = "0.4.0"
 
 const usage = `didcomm - DIDComm v2 messaging CLI
 
