@@ -1,10 +1,14 @@
 package didcomm
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"testing"
+
+	"github.com/lestrrat-go/jwx/v3/jwa"
+	"github.com/lestrrat-go/jwx/v3/jws"
 )
 
 func setupAliceAndBob(t *testing.T) (aliceDoc *DIDDocument, bobDoc *DIDDocument, bobKP *KeyPair, client *Client) {
@@ -627,6 +631,107 @@ func TestIsJWS(t *testing.T) {
 	}
 	if isJWS([]byte{}) {
 		t.Fatal("empty data should not be detected as JWS")
+	}
+	// JSON flattened JWS
+	if !isJWS([]byte(`{"payload":"abc","protected":"def","signature":"ghi"}`)) {
+		t.Fatal("should detect JSON flattened JWS")
+	}
+	// JSON general JWS
+	if !isJWS([]byte(`{"payload":"abc","signatures":[{"protected":"def","signature":"ghi"}]}`)) {
+		t.Fatal("should detect JSON general JWS")
+	}
+	// JWE JSON should not be detected as JWS
+	if isJWS([]byte(`{"ciphertext":"abc","recipients":[]}`)) {
+		t.Fatal("JWE JSON should not be detected as JWS")
+	}
+	// Plain message JSON should not be detected as JWS
+	if isJWS([]byte(`{"id":"1","type":"x","body":{}}`)) {
+		t.Fatal("plain JSON should not be detected as JWS")
+	}
+}
+
+func TestClient_PackSigned_OutputsJSON(t *testing.T) {
+	aliceDoc, _, _, client := setupAliceAndBob(t)
+	ctx := context.Background()
+
+	msg := &Message{
+		ID:   "msg-json",
+		Type: "https://example.com/test",
+		From: aliceDoc.ID,
+		Body: json.RawMessage(`{"hello":"world"}`),
+	}
+
+	packed, err := client.PackSigned(ctx, msg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	trimmed := bytes.TrimSpace(packed)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		t.Fatalf("expected JSON-serialized JWS, got: %s", trimmed)
+	}
+
+	var peek struct {
+		Payload    string          `json:"payload"`
+		Signature  string          `json:"signature"`
+		Signatures json.RawMessage `json:"signatures"`
+	}
+	if err := json.Unmarshal(trimmed, &peek); err != nil {
+		t.Fatalf("expected JSON JWS, got unparseable: %v", err)
+	}
+	if peek.Payload == "" {
+		t.Fatal("JSON JWS missing payload")
+	}
+	if peek.Signature == "" && len(peek.Signatures) == 0 {
+		t.Fatal("JSON JWS missing signature(s)")
+	}
+}
+
+// Backward compatibility: compact-serialized JWS produced elsewhere must still unpack.
+func TestClient_Unpack_CompactJWS(t *testing.T) {
+	aliceDoc, _, _, client := setupAliceAndBob(t)
+	ctx := context.Background()
+
+	signingKey, err := client.getSenderSigningKey(ctx, aliceDoc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hdrs := jws.NewHeaders()
+	if kid, ok := signingKey.KeyID(); ok && kid != "" {
+		_ = hdrs.Set(jws.KeyIDKey, kid)
+	}
+	_ = hdrs.Set(jws.TypeKey, "application/didcomm-signed+json")
+
+	msg := &Message{
+		ID:   "compat-1",
+		Type: "https://example.com/test",
+		From: aliceDoc.ID,
+		Body: json.RawMessage(`{"compat":true}`),
+	}
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Sign without jws.WithJSON — produces compact serialization.
+	compact, err := jws.Sign(payload, jws.WithKey(jwa.EdDSA(), signingKey, jws.WithProtectedHeaders(hdrs)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Count(compact, []byte(".")) != 2 {
+		t.Fatalf("expected compact JWS, got: %s", compact)
+	}
+
+	result, err := client.Unpack(ctx, compact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Signed {
+		t.Fatal("expected Signed=true")
+	}
+	if result.Message.ID != "compat-1" {
+		t.Fatalf("expected ID=compat-1, got %s", result.Message.ID)
 	}
 }
 

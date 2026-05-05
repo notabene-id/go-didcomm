@@ -362,12 +362,28 @@ func isJWE(data []byte) bool {
 	return parts == 4
 }
 
-// isJWS checks if the data looks like a JWS (compact serialization).
-// JWS compact is always base64url.base64url.base64url (never starts with '{'),
-// while plain JSON always starts with '{'.
+// isJWS checks if the data looks like a JWS (compact or JSON serialization).
+// Compact form is base64url.base64url.base64url; JSON form is an object with a
+// "payload" field plus either a top-level "signature"/"protected" (flattened)
+// or a "signatures" array (general).
 func isJWS(data []byte) bool {
-	if len(data) == 0 || data[0] == '{' {
+	if len(data) == 0 {
 		return false
+	}
+	if data[0] == '{' {
+		var peek struct {
+			Payload    string          `json:"payload"`
+			Signature  string          `json:"signature"`
+			Protected  string          `json:"protected"`
+			Signatures json.RawMessage `json:"signatures"`
+		}
+		if err := json.Unmarshal(data, &peek); err != nil {
+			return false
+		}
+		if peek.Payload == "" {
+			return false
+		}
+		return peek.Signature != "" || peek.Protected != "" || len(peek.Signatures) > 0
 	}
 	// Compact: 3 base64url parts separated by dots
 	parts := bytes.Count(data, []byte("."))

@@ -152,23 +152,34 @@ const (
 // DetectContentType returns the DIDComm media type based on the envelope format.
 func DetectContentType(data []byte) string {
 	data = []byte(strings.TrimSpace(string(data)))
-	dots := strings.Count(string(data), ".")
 
-	switch dots {
+	// JSON serialization (JWE, JWS, or plain message)
+	if len(data) > 0 && data[0] == '{' {
+		var peek struct {
+			Ciphertext string          `json:"ciphertext"`
+			Payload    string          `json:"payload"`
+			Signature  string          `json:"signature"`
+			Protected  string          `json:"protected"`
+			Signatures json.RawMessage `json:"signatures"`
+		}
+		if err := json.Unmarshal(data, &peek); err == nil {
+			if peek.Ciphertext != "" {
+				return ContentTypeEncrypted
+			}
+			if peek.Payload != "" && (peek.Signature != "" || peek.Protected != "" || len(peek.Signatures) > 0) {
+				return ContentTypeSigned
+			}
+		}
+		return ContentTypePlain
+	}
+
+	// Compact serializations: JWE (5 parts) or JWS (3 parts)
+	switch strings.Count(string(data), ".") {
 	case 4:
 		return ContentTypeEncrypted
 	case 2:
 		return ContentTypeSigned
 	default:
-		// JSON serialization JWE or plain
-		if len(data) > 0 && data[0] == '{' {
-			var peek struct {
-				Ciphertext string `json:"ciphertext"`
-			}
-			if err := json.Unmarshal(data, &peek); err == nil && peek.Ciphertext != "" {
-				return ContentTypeEncrypted
-			}
-		}
 		return ContentTypePlain
 	}
 }

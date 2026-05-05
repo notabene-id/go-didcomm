@@ -7,6 +7,7 @@ A Go library for [DIDComm v2](https://identity.foundation/didcomm-messaging/spec
 - **Signed messages** (JWS) using Ed25519/EdDSA
 - **Anonymous encryption** (anoncrypt) using ECDH-ES+A256KW / A256CBC-HS512
 - **Authenticated encryption** (authcrypt) using sign-then-encrypt
+- **JSON serialization by default** for JWS and JWE; compact serialization is auto-detected on unpack
 - **Auto-detection** of message format on unpack (JWE, JWS, or plain JSON)
 - **did:key** and **did:web** generation with Ed25519 signing and X25519 key agreement keys
 - **Automatic DID resolution** for did:key (local) and did:web (HTTPS fetch)
@@ -227,6 +228,10 @@ go test -cover ./...
 └── internal/
     └── convert/         # Ed25519 ↔ X25519 key conversion
 ```
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ## License
 

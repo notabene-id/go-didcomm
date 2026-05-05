@@ -244,9 +244,21 @@ func TestCLI_PackSigned_Unpack_RoundTrip(t *testing.T) {
 		t.Fatalf("pack signed failed: %s", err)
 	}
 
-	// Should be JWS (3 dot-separated parts)
-	if strings.Count(string(packed), ".") != 2 {
-		t.Fatalf("expected JWS compact, got: %s", string(packed)[:min(100, len(packed))])
+	// Should be JWS JSON serialization (object with payload + signature/signatures)
+	trimmed := strings.TrimSpace(string(packed))
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		t.Fatalf("expected JWS JSON object, got: %s", trimmed[:min(100, len(trimmed))])
+	}
+	var jwsPeek struct {
+		Payload    string          `json:"payload"`
+		Signature  string          `json:"signature"`
+		Signatures json.RawMessage `json:"signatures"`
+	}
+	if jerr := json.Unmarshal([]byte(trimmed), &jwsPeek); jerr != nil {
+		t.Fatalf("expected JWS JSON object, got: %s", trimmed[:min(100, len(trimmed))])
+	}
+	if jwsPeek.Payload == "" || (jwsPeek.Signature == "" && len(jwsPeek.Signatures) == 0) {
+		t.Fatalf("expected JWS JSON with payload and signature(s), got: %s", trimmed[:min(100, len(trimmed))])
 	}
 
 	// Unpack

@@ -8,7 +8,9 @@ import (
 	"github.com/lestrrat-go/jwx/v3/jws"
 )
 
-// signMessage creates a JWS compact serialization of the payload using EdDSA.
+// signMessage creates a JWS JSON serialization of the payload using EdDSA.
+// JSON serialization is used by default to match JWE behavior; jws.Verify and
+// jws.Parse auto-detect both compact and JSON serializations on the unpack side.
 func signMessage(payload []byte, signingKey jwk.Key) ([]byte, error) {
 	hdrs := jws.NewHeaders()
 	if kid, ok := signingKey.KeyID(); ok && kid != "" {
@@ -22,6 +24,7 @@ func signMessage(payload []byte, signingKey jwk.Key) ([]byte, error) {
 
 	signed, err := jws.Sign(
 		payload,
+		jws.WithJSON(),
 		jws.WithKey(jwa.EdDSA(), signingKey, jws.WithProtectedHeaders(hdrs)),
 	)
 	if err != nil {
@@ -30,7 +33,7 @@ func signMessage(payload []byte, signingKey jwk.Key) ([]byte, error) {
 	return signed, nil
 }
 
-// verifySignature verifies a JWS compact serialization and returns the payload.
+// verifySignature verifies a JWS (compact or JSON serialization) and returns the payload.
 func verifySignature(signed []byte, publicKey jwk.Key) ([]byte, error) {
 	payload, err := jws.Verify(
 		signed,
