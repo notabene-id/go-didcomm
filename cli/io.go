@@ -144,12 +144,20 @@ func BuildClient(keyFile, didDocPaths string) (*didcomm.Client, error) {
 }
 
 const (
+	// DIDComm v2 media types (RFC 6839 +json suffix indicates JSON serialization).
 	ContentTypeEncrypted = "application/didcomm-encrypted+json"
 	ContentTypeSigned    = "application/didcomm-signed+json"
 	ContentTypePlain     = "application/didcomm-plain+json"
+	// ContentTypeJOSE is the RFC 7515/7516 media type for JOSE compact serialization.
+	// DIDComm v2 mandates JSON serialization for transmission, so encountering compact
+	// data here is non-conforming; we still label it accurately rather than as +json.
+	ContentTypeJOSE = "application/jose"
 )
 
-// DetectContentType returns the DIDComm media type based on the envelope format.
+// DetectContentType returns the media type for the envelope format.
+// JSON-serialized DIDComm envelopes get the corresponding application/didcomm-*+json
+// type. Compact-serialized JWS/JWE get application/jose, since the +json DIDComm
+// types specifically signal JSON serialization (per RFC 6839 §3.1).
 func DetectContentType(data []byte) string {
 	data = []byte(strings.TrimSpace(string(data)))
 
@@ -173,12 +181,10 @@ func DetectContentType(data []byte) string {
 		return ContentTypePlain
 	}
 
-	// Compact serializations: JWE (5 parts) or JWS (3 parts)
+	// Compact serialization: JWS (3 parts) or JWE (5 parts) — labeled application/jose.
 	switch strings.Count(string(data), ".") {
-	case 4:
-		return ContentTypeEncrypted
-	case 2:
-		return ContentTypeSigned
+	case 2, 4:
+		return ContentTypeJOSE
 	default:
 		return ContentTypePlain
 	}

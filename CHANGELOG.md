@@ -9,12 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.0] - 2026-05-05
 
+### Fixed
+- **JWS serialization now conforms to DIDComm v2.** The spec ([signature.md](https://github.com/decentralized-identity/didcomm-messaging/blob/master/docs/spec-files/signature.md)) states: "When transmitted in a normal JWM fashion, the JSON Serialization MUST be used … Message recipients MUST be able to process both [general and flattened] forms." Pre-v0.4.0 emitted JWS in compact serialization (non-conforming) and refused JSON-serialized JWS on `Unpack` (also non-conforming).
+- `cli.DetectContentType` no longer mislabels compact JWS/JWE as `application/didcomm-*+json`. The `+json` suffix per RFC 6839 §3.1 specifically signals JSON serialization, so compact data now returns `application/jose` (the RFC 7515/7516 media type for compact JOSE). DIDComm v2 mandates JSON serialization for transmission, so this only affects users feeding compact JOSE through the CLI's `--send` flag.
+
 ### Added
-- JWS JSON serialization is now produced by default by `PackSigned` and by the inner JWS of `PackAuthcrypt`, matching JWE behavior (#TBD).
-- `Unpack` and `cli.DetectContentType` now recognize JWS JSON serialization (both flattened and general forms) in addition to compact serialization.
+- `cli.ContentTypeJOSE = "application/jose"` constant for compact JOSE.
+- `Unpack` and `DetectContentType` recognize JWS JSON serialization in both flattened (`payload`+`signature`) and general (`payload`+`signatures[]`) forms.
 
 ### Changed
-- `signMessage` calls `jws.WithJSON()` by default. Existing compact-serialized JWS envelopes produced elsewhere continue to verify and unpack — only the pack-side default has changed.
+- `PackSigned` and the inner JWS of `PackAuthcrypt` now emit JSON serialization by default (jwx flattened form for the single-signer case, valid per spec). Compact-serialized JWS produced by other implementations continues to verify on the unpack side — only the pack-side default changed.
 - `cmd/didcomm` CLI version bumped to `0.4.0`.
 
 ## [0.3.0] - 2026-03-25

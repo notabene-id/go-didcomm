@@ -214,8 +214,8 @@ func TestDetectContentType(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"JWE compact", "a.b.c.d.e", "application/didcomm-encrypted+json"},
-		{"JWS compact", "a.b.c", "application/didcomm-signed+json"},
+		{"JWE compact", "a.b.c.d.e", "application/jose"},
+		{"JWS compact", "a.b.c", "application/jose"},
 		{"plain JSON", `{"id":"1"}`, "application/didcomm-plain+json"},
 		{"JWE JSON", `{"ciphertext":"abc","recipients":[]}`, "application/didcomm-encrypted+json"},
 		{"JWS JSON flattened", `{"payload":"abc","protected":"def","signature":"ghi"}`, "application/didcomm-signed+json"},
