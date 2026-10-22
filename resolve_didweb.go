@@ -60,8 +60,14 @@ func (r *DIDWebResolver) Resolve(ctx context.Context, did string) (*DIDDocument,
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusNotFound, http.StatusGone:
 		return nil, fmt.Errorf("%w: HTTP %d fetching %s", ErrDIDNotFound, resp.StatusCode, did)
+	default:
+		// Any other status (5xx, 429, ...) says nothing about whether the
+		// document exists, so it must not read as ErrDIDNotFound.
+		return nil, fmt.Errorf("fetch DID document for %s: HTTP %d", did, resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxDIDDocBytes+1))

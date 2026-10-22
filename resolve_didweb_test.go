@@ -155,26 +155,45 @@ func TestDIDWebResolver_Resolve_WithPath(t *testing.T) {
 	}
 }
 
-func TestDIDWebResolver_NotFound(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "not found", http.StatusNotFound)
-	}))
-	defer server.Close()
+func TestDIDWebResolver_HTTPStatus(t *testing.T) {
+	tests := []struct {
+		name         string
+		status       int
+		wantNotFound bool
+	}{
+		{"404 not found", http.StatusNotFound, true},
+		{"410 gone", http.StatusGone, true},
+		{"500 internal error", http.StatusInternalServerError, false},
+		{"503 unavailable", http.StatusServiceUnavailable, false},
+		{"429 too many requests", http.StatusTooManyRequests, false},
+	}
 
-	host := server.Listener.Addr().String()
-	testDID := "did:web:" + encodeWebHost(host)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, http.StatusText(tt.status), tt.status)
+			}))
+			defer server.Close()
 
-	resolver := &DIDWebResolver{HTTPClient: server.Client()}
-	origTransport := server.Client().Transport
-	server.Client().Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		req.URL.Scheme = "https"
-		req.URL.Host = host
-		return origTransport.RoundTrip(req)
-	})
+			host := server.Listener.Addr().String()
+			testDID := "did:web:" + encodeWebHost(host)
 
-	_, err := resolver.Resolve(context.Background(), testDID)
-	if !errors.Is(err, ErrDIDNotFound) {
-		t.Fatalf("expected ErrDIDNotFound, got %v", err)
+			resolver := &DIDWebResolver{HTTPClient: server.Client()}
+			origTransport := server.Client().Transport
+			server.Client().Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				req.URL.Scheme = "https"
+				req.URL.Host = host
+				return origTransport.RoundTrip(req)
+			})
+
+			_, err := resolver.Resolve(context.Background(), testDID)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if got := errors.Is(err, ErrDIDNotFound); got != tt.wantNotFound {
+				t.Fatalf("errors.Is(err, ErrDIDNotFound) = %v, want %v (err: %v)", got, tt.wantNotFound, err)
+			}
+		})
 	}
 }
 

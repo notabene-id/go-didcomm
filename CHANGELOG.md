@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- `DIDWebResolver` wraps `ErrDIDNotFound` only for HTTP 404 and 410. Other
+  non-200 statuses (5xx, 429, ...) return a plain error, so callers treat a
+  briefly unavailable host as transient rather than as a DID with no document.
+
 ## [0.7.0] - 2026-07-28
 
 **Breaking**: `Service.ServiceEndpoint` is now a `ServiceEndpoint` struct
