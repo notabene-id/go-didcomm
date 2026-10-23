@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-10-23
+
+### Fixed
+- `DIDWebResolver` wraps `ErrDIDNotFound` only for HTTP 404 and 410. Other
+  non-200 statuses (5xx, 429, ...) return a plain error, so callers treat a
+  briefly unavailable host as transient rather than as a DID with no document.
+
 ## [0.7.0] - 2026-07-28
 
 **Breaking**: `Service.ServiceEndpoint` is now a `ServiceEndpoint` struct
@@ -144,6 +151,7 @@ the pack/unpack API all changed. There is no in-place upgrade from 0.4.x.
 - `SecretsResolver` interface and in-memory implementation.
 - GitHub Actions CI with linting and tests.
 
+[0.7.1]: https://github.com/notabene-id/go-didcomm/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/notabene-id/go-didcomm/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/notabene-id/go-didcomm/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/notabene-id/go-didcomm/compare/v0.5.0...v0.6.0

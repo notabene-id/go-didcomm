@@ -7,7 +7,8 @@ var (
 	// ErrKeyNotFound is returned when a key cannot be found for a kid.
 	ErrKeyNotFound = errors.New("didcomm: key not found")
 
-	// ErrDIDNotFound is returned when a DID document cannot be resolved.
+	// ErrDIDNotFound is returned when a DID provably has no usable document (e.g. HTTP 404/410).
+	// Transient fetch failures (5xx, 429, network errors) are not wrapped with it.
 	ErrDIDNotFound = errors.New("didcomm: DID not found")
 
 	// ErrInvalidMessage is returned when a message is malformed or missing
